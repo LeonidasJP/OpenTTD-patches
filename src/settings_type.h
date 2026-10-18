@@ -382,6 +382,7 @@ struct GUISettings : public TimeSettings {
 	bool        departure_smart_terminus;                        ///< whether to only show passenger services
 	DeparturesConditionalJumpResult departure_conditionals;      ///< how to handle conditional orders
 	bool        departure_merge_identical;                       ///< whether to merge identical departures
+	bool        departure_show_missed_dispatch_cancelled;        ///< whether to show scheduled dispatch departures missed due to lateness as cancelled
 	uint8_t     departure_default_mode;                          ///< default mode for non-waypoint departure board window
 	uint8_t     departure_default_source;                        ///< default source for departure board window
 	bool        departure_default_via;                           ///< default via type for station departure board window
