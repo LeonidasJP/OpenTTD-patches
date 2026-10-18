@@ -13,9 +13,14 @@
 #include "command_type.h"
 #include "group_type.h"
 #include "vehicle_type.h"
+#include "direction_type.h"
+#include "tile_type.h"
+#include <optional>
+#include <vector>
 #include "3rdparty/cpp-btree/btree_map.h"
 
 struct Train;
+struct Vehicle;
 
 /**
  * Coupling state of a combination of two trains (services).
@@ -50,5 +55,16 @@ Train *SplitCombination(Train *head);
 
 void OnTrainCouplingVehicleDeleted(Train *v);
 void ValidateTrainCouplings();
+std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles();
+
+Train *GetCouplingApproachTarget(const Train *v);
+bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
+std::optional<int> GetCouplingStopLocation(const Train *v, DiagDirection dir);
+std::optional<int> GetCouplingStopDistance(const Train *v);
+bool IsTrainBeingApproachedForCoupling(const Train *target);
+void ClearCouplingApproach(Train *v);
+void OnCouplingTrainEnteredStation(Train *consist);
+void ProcessPendingTrainCouplings();
+bool IsCouplingApproachCollision(const Train *a, const Train *b);
 
 #endif /* TRAIN_COUPLING_H */

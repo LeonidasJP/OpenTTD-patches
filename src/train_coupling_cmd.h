@@ -16,5 +16,6 @@
 DEF_CMD_TUPLE_LT (Commands::CoupleTrains,       CmdCoupleTrains,       {}, CommandType::VehicleManagement, CmdDataT<VehicleID, VehicleID, bool>)
 DEF_CMD_TUPLE_LT (Commands::SplitCoupledTrain,  CmdSplitCoupledTrain,  {}, CommandType::VehicleManagement, CmdDataT<VehicleID>)
 DEF_CMD_TUPLE_LT (Commands::CutTrain,           CmdCutTrain,           {}, CommandType::VehicleManagement, CmdDataT<VehicleID>)
+DEF_CMD_TUPLE_LT (Commands::SetTrainCouplingTarget, CmdSetTrainCouplingTarget, {}, CommandType::VehicleManagement, CmdDataT<VehicleID, VehicleID, bool>)
 
 #endif /* TRAIN_COUPLING_CMD_H */

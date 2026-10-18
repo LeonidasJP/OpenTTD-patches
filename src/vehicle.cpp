@@ -1683,6 +1683,7 @@ void CallVehicleTicks()
 		}
 	}
 	RecordSyncEvent(NSRE_VEH_TRAIN);
+	ProcessPendingTrainCouplings();
 	{
 		PerformanceMeasurer framerate(PerformanceElement::GameLoopRoadVehicles);
 		for (RoadVehicle *front : _tick_road_veh_front_cache) {
@@ -3812,7 +3813,8 @@ void Vehicle::HandleLoading(bool mode)
 			if (!mode && this->type != VehicleType::Train) PayStationSharingFee(this, Station::Get(this->last_station_visited));
 
 			/* Not the first call for this tick, or still loading */
-			if (mode || !this->vehicle_flags.Test(VehicleFlag::LoadingFinished) || (this->current_order_time < wait_time && this->current_order.GetLeaveType() != OLT_LEAVE_EARLY) || ShouldVehicleContinueWaiting(this)) {
+			if (mode || !this->vehicle_flags.Test(VehicleFlag::LoadingFinished) || (this->current_order_time < wait_time && this->current_order.GetLeaveType() != OLT_LEAVE_EARLY) || ShouldVehicleContinueWaiting(this) ||
+					(this->type == VehicleType::Train && IsTrainBeingApproachedForCoupling(Train::From(this)))) {
 				if (!mode && this->type == VehicleType::Train && Train::From(this)->flags.Test(VehicleRailFlag::AdvanceInPlatform)) this->AdvanceLoadingInStation();
 				return;
 			}

@@ -692,6 +692,7 @@ enum class Commands : uint8_t {
 	CoupleTrains,                           ///< couple two trains in a station
 	SplitCoupledTrain,                      ///< split a combination of coupled trains
 	CutTrain,                               ///< debug: cut a train into two trains outside a depot
+	SetTrainCouplingTarget,                 ///< set the train to which a train drives to couple
 
 	CreateGroup,                            ///< create a new group
 	DeleteGroup,                            ///< delete a group
