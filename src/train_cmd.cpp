@@ -1243,6 +1243,15 @@ Train::MaxSpeedInfo Train::GetCurrentMaxSpeedInfoInternal(bool update_state) con
 		advisory_max_speed = std::min<int>(advisory_max_speed, ReversingDistanceTargetSpeed(this));
 	}
 
+	if (this->split_partner != VehicleID::Invalid()) {
+		if (update_state) UpdateSplitPartner(const_cast<Train *>(this));
+		if (IsTrainBlockedBySplitPartner(this)) {
+			/* Do not drive into the train from which this train was just split. */
+			max_speed = 0;
+			advisory_max_speed = 0;
+		}
+	}
+
 	std::optional<int> coupling_distance;
 	if (this->coupling_target != VehicleID::Invalid()) {
 		const Train *moving_front = this->GetMovingFront();
@@ -3911,7 +3920,7 @@ static void ClearPathReservation(const Train *v, TileIndex tile, Trackdir track_
 		/* If the new tile is not a further tile of the same station, we
 		 * clear the reservation for the whole platform. */
 		if (!IsCompatibleTrainStationTile(new_tile, tile)) {
-			SetRailStationPlatformReservation(tile, ReverseDiagDir(dir), false);
+			SetRailStationPlatformReservation(tile, ReverseDiagDir(dir), false, v);
 		}
 	} else {
 		/* Any other tile */
