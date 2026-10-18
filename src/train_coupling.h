@@ -66,5 +66,7 @@ void ClearCouplingApproach(Train *v);
 void OnCouplingTrainEnteredStation(Train *consist);
 void ProcessPendingTrainCouplings();
 bool IsCouplingApproachCollision(const Train *a, const Train *b);
+bool IsTrainBlockedBySplitPartner(const Train *v);
+void UpdateSplitPartner(Train *v);
 
 #endif /* TRAIN_COUPLING_H */

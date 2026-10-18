@@ -18,7 +18,7 @@
 
 TrackBits GetReservedTrackbits(TileIndex t);
 
-void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool b);
+void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool b, const Train *clearing_train = nullptr);
 
 bool TryReserveRailTrack(TileIndex tile, Track t, bool trigger_stations = true);
 bool TryReserveRailTrackdir(const Train *v, TileIndex tile, Trackdir td, bool trigger_stations = true);
