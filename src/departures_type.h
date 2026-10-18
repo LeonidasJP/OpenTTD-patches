@@ -138,7 +138,8 @@ struct Departure {
 			this->via == d.via &&
 			this->via2 == d.via2 &&
 			this->type == d.type &&
-			this->show_as == d.show_as;
+			this->show_as == d.show_as &&
+			(this->status == D_CANCELLED) == (d.status == D_CANCELLED);
 	}
 
 	inline Ticks EffectiveWaitingTime() const
