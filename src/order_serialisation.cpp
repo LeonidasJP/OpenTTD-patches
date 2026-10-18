@@ -103,6 +103,11 @@ struct OrderSerialisationFieldNames {
 		static constexpr char STOPPING_PATTERN[]            = "stopping-pattern";            ///< enum
 		static constexpr char STOP_LOCATION[]               = "stop-location";               ///< enum
 		static constexpr char STOP_DIRECTION[]              = "stop-direction";              ///< enum
+		static constexpr char COUPLING_MODE[]               = "coupling-mode";               ///< enum
+		static constexpr char COUPLING_ARRIVING_LEADS[]     = "coupling-arriving-leads";     ///< bool
+		static constexpr char COUPLING_FILTER[]             = "coupling-filter";             ///< enum
+		static constexpr char COUPLING_FILTER_ID[]          = "coupling-filter-id";          ///< int     Group ID or order list ID
+		static constexpr char DEPOT_COUPLED_ALLOWED[]       = "depot-coupled-allowed";       ///< bool
 		static constexpr char LOAD[]                        = "load";                        ///< enum
 		static constexpr char UNLOAD[]                      = "unload";                      ///< enum
 		static constexpr char LOAD_BY_CARGO_TYPE[]          = "load-by-cargo-type";          ///< object  Contains "load" and "unload" settings for specific cargo-ids
@@ -181,6 +186,8 @@ static nlohmann::ordered_json OrderToJSON(const Order &o, VehicleType vt)
 		} else if (o.GetDepotOrderType().Test(OrderDepotTypeFlag::Service)) {
 			json[OFName::DEPOT_ACTION] = DA_SERVICE;
 		}
+
+		if (o.GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) json[OFName::DEPOT_COUPLED_ALLOWED] = true;
 	}
 
 	if (o.GetColour() != Colours::Invalid) {
@@ -246,6 +253,17 @@ static nlohmann::ordered_json OrderToJSON(const Order &o, VehicleType vt)
 			json[OFName::STOP_LOCATION] = o.GetStopLocation();
 		} else if (vt == VehicleType::Road && o.GetRoadVehTravelDirection() != DiagDirection::Invalid) {
 			json[OFName::STOP_DIRECTION] = o.GetRoadVehTravelDirection();
+		}
+
+		if (vt == VehicleType::Train && o.GetCouplingMode() != OrderCouplingMode::None) {
+			json[OFName::COUPLING_MODE] = o.GetCouplingMode();
+			if (o.GetCouplingMode() == OrderCouplingMode::Couple) {
+				if (o.IsCouplingArrivingLeads()) json[OFName::COUPLING_ARRIVING_LEADS] = true;
+				if (o.GetCouplingFilter() != OrderCouplingFilter::Any) {
+					json[OFName::COUPLING_FILTER] = o.GetCouplingFilter();
+					json[OFName::COUPLING_FILTER_ID] = o.GetCouplingFilterID();
+				}
+			}
 		}
 
 		if (o.GetLeaveType() != OLT_NORMAL) {
@@ -1124,6 +1142,7 @@ static void ImportJsonOrder(JSONToVehicleCommandParser<JSONToVehicleMode::Order>
 
 	if (type == OT_GOTO_DEPOT) {
 		json_importer.TryApplyModifyOrder<OrderDepotAction>(OFName::DEPOT_ACTION, MOF_DEPOT_ACTION, JOIET_MAJOR, DA_ALWAYS_GO);
+		if (json_importer.TryGetField<bool>(OFName::DEPOT_COUPLED_ALLOWED, JOIET_MINOR).value_or(false)) json_importer.ModifyOrder(MOF_DEPOT_COUPLED_ALLOWED, 1);
 	}
 
 	json_importer.TryApplyModifyOrder<std::string>(OFName::LABEL_TEXT, MOF_LABEL_TEXT, JOIET_MINOR);
@@ -1624,6 +1643,29 @@ OrderImportErrors ImportJsonOrderList(const Vehicle *veh, std::string_view json_
 
 		order_id++;
 	});
+
+	/* Coupling modes: first all split orders, then the couple orders, so the order sequence is valid when a couple order is set. */
+	for (const OrderCouplingMode pass : { OrderCouplingMode::Split, OrderCouplingMode::Couple }) {
+		order_id = order_insert_offset;
+		iterate_orders([&](const nlohmann::json &value) {
+			auto local_importer = json_importer.WithNewTarget<JSONToVehicleMode::Order>(value, order_id);
+
+			if (local_importer.TryGetField<OrderCouplingMode>(FName::Orders::COUPLING_MODE, JOIET_MINOR) == pass) {
+				cmd_buffer.StartOrder();
+				local_importer.ModifyOrder(MOF_COUPLING_MODE, to_underlying(pass), INVALID_CARGO, {}, order_id);
+				if (pass == OrderCouplingMode::Couple) {
+					if (local_importer.TryGetField<bool>(FName::Orders::COUPLING_ARRIVING_LEADS, JOIET_MINOR).value_or(false)) {
+						local_importer.ModifyOrder(MOF_COUPLING_LEADER, 1, INVALID_CARGO, {}, order_id);
+					}
+					if (local_importer.TryApplyModifyOrder<OrderCouplingFilter>(FName::Orders::COUPLING_FILTER, MOF_COUPLING_FILTER, JOIET_MINOR, std::nullopt, INVALID_CARGO, order_id)) {
+						local_importer.TryApplyModifyOrder<uint16_t>(FName::Orders::COUPLING_FILTER_ID, MOF_COUPLING_FILTER_ID, JOIET_MINOR, std::nullopt, INVALID_CARGO, order_id);
+					}
+				}
+			}
+
+			order_id++;
+		});
+	}
 
 	cmd_buffer.Flush();
 	return errors;

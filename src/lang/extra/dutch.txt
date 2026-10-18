@@ -154,6 +154,8 @@ STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Laatste koppeli
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Waarschuwing: een gekoppelde trein gebruikt deze orders
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}De gekoppelde combinatie stopt in het depot. Zet "Gekoppelde combinatie mag in depot stoppen" aan om deze waarschuwing te voorkomen
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
+STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} heeft twee Koppelen-orders zonder Splitsen-order ertussen
+STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} heeft een Koppelen-order met een verwijderde groep of orderlijst
 STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Gekoppelde combinatie naar depot sturen
 STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}Deze trein is gekoppeld aan een andere trein. De gekoppelde combinatie naar een depot sturen om daar te stoppen?
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}

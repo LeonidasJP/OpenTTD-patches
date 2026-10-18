@@ -97,6 +97,8 @@
 #include "network/network_content.h"
 #endif /* WITH_ZLIB */
 
+#include "order_serialisation.h"
+
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -466,6 +468,36 @@ static bool ConCoupleApproach(std::span<std::string_view> argv)
  * Set the coupling action of a station order.
  * @copydoc IConsoleCmdProc
  */
+/**
+ * Debug: print the JSON export of the orders of a train, and optionally import it into another train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConOrdersJson(std::span<std::string_view> argv)
+{
+	if (argv.size() < 2 || argv.size() > 3) {
+		IConsolePrint(CC_HELP, "Debug: print the JSON export of the orders of a train, and replace the orders of another train by it. Usage: 'orders_json <train number> [<destination train number>]'.");
+		return true;
+	}
+	Train *src = FindLocalTrainByUnitNumber(argv[1]);
+	if (src == nullptr || src->orders == nullptr) {
+		IConsolePrint(CC_ERROR, "Train or orders not found.");
+		return true;
+	}
+	const std::string json = OrderListToJSONString(src->orders);
+	IConsolePrint(CC_DEFAULT, "{}", json);
+	if (argv.size() == 3) {
+		Train *dst = FindLocalTrainByUnitNumber(argv[2]);
+		if (dst == nullptr) {
+			IConsolePrint(CC_ERROR, "Destination train not found.");
+			return true;
+		}
+		AutoRestoreBackup cur_company(_current_company, _local_company);
+		OrderImportErrors errors = ImportJsonOrderList(dst, json);
+		IConsolePrint(CC_DEFAULT, "orders_json: imported, errors: {}", errors.HasErrors() ? "yes" : "no");
+	}
+	return true;
+}
+
 static bool ConCouplingOrder(std::span<std::string_view> argv)
 {
 	if (argv.size() < 4) {
@@ -5017,6 +5049,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("debug_coupling",          ConDebugCoupling);
 	IConsole::CmdRegister("dump_rail_tiles",         ConDumpRailTiles);
 	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
+	IConsole::CmdRegister("orders_json",             ConOrdersJson);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
