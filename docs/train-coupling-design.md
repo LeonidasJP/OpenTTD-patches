@@ -120,73 +120,62 @@ Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toeg
 
 ### 4.1 Volgorde in de keten en rijrichting
 
-- **Zelfde richting** (de aankomende trein rijdt tegen de achterkant van de wachtende): de keten wordt `wachtende.kop … wachtende.staart, aankomende.kop … aankomende.staart`. Er hoeft geen voertuig om.
-- **Kop tegen kop:** de wachtende trein, of combinatie, wordt eerst omgedraaid met de bestaande omkeerfuncties. Dat mag, want hij staat stil in het station.
-- Daarna wordt de kop van de leider de kop van de combinatie. Ligt die aan de "verkeerde" kant, dan regelt de bestaande JGRPP-logica dat: `DrivingBackwards` of omkeren.
-- Per stel slaat het koppelrecord op welk voertuig het eerste en welk het laatste is, en of het stel omgedraaid is. Bij het splitsen wordt dat precies teruggezet.
+Geïmplementeerd in fase 1 (`train_coupling.cpp`):
 
-### 4.2 `CoupleTrains(leader, passive)`
+- **Welke treinen passen aan elkaar:** de keten van de combinatie bestaat uit een eerste deel en een tweede deel. Twee treinen kunnen koppelen als het laatste voertuig van de ene trein en het eerste voertuig van de andere precies zo staan als twee opeenvolgende voertuigen in één keten. Dat betekent: dezelfde richting, op één lijn, en de afstand tussen hun middelpunten zoals `Train::CalcNextVehicleOffset` die verwacht.
+- **Zelfde richting** (de aankomende trein rijdt tegen de achterkant van de wachtende): de keten wordt `wachtende + aankomende`. Er hoeft geen voertuig om.
+- **Kop tegen kop of staart tegen staart:** dit wordt in fase 1 nog geweigerd. In fase 2 wordt de aankomende trein in dat geval eerst omgedraaid. Dat mag, want hij staat dan stil.
+- Een combinatie krijgt de rijrichting (`DrivingBackwards`) van het eerste deel.
 
-Dit is gebaseerd op de relinkcode van `CmdMoveRailVehicle`, maar zonder de eis dat de trein in een depot staat.
+### 4.2 Identiteit van de treinen
 
-1. Controleer de voorwaarden:
-   - de lengte is hoogstens `max_train_length`;
-   - geen van beide treinen is al gekoppeld (§5.3);
-   - de NewGRF-callback `CheckTrainAttachment` staat het toe;
-   - beide treinen hebben dezelfde eigenaar.
-2. Haal de passieve kop uit het station: verwijder hem uit `loading_vehicles`, reken `cargo_payment` af en voer `LeaveStation` uit **zonder** de dienstregeling bij te werken.
-3. Maak het koppelrecord aan (§5) en verplaats de eigen gegevens van de passieve kop daarheen.
-4. Koppel de ketens:
-   - `SetNext`, `NormaliseSubtypes` en `NormaliseDualHeads`;
-   - daarna `NormaliseTrainHead`, `ConsistChanged(CCF_TRACK)`, `CheckBreakdownFlags` en `InvalidateVehicleTickCaches`;
-   - tel de groepsstatistieken opnieuw;
-   - zet `LastLoadStationSeparate`, zodat elke wagon zijn eigen laadstation houdt.
-5. Leg de spoorreserveringen opnieuw met `ReserveTrackUnderConsist` voor de hele combinatie, en reset `lookahead`.
-6. De leider gaat verder met laden en lossen op dit station volgens zijn huidige order.
+- **Waar de identiteit staat:** onder "identiteit" valt alles wat bij de dienst hoort: orders, orderindexen, dienstregeling, unitnummer, naam, groep, winst, slots en de laadstatus. De identiteit van het passieve stel **blijft op zijn eigen kopvoertuig staan**. Dat voertuig verliest alleen de status "voorste voertuig" (`GVSF_FRONT`) en krijgt de vlag `CoupledPassiveHead`.
+  - Voordeel: het blijft gewoon lid van zijn gedeelde orderlijst. Wordt de orderlijst bewerkt terwijl de trein gekoppeld rijdt, dan worden zijn orderindexen automatisch bijgewerkt.
+- **Leider fysiek achteraan:** het voorste voertuig van de keten draagt altijd de identiteit van de leider. Zit de leider fysiek in het tweede deel, dan worden de identiteiten van de twee kopvoertuigen verwisseld (`SwapTrainIdentities`). Bij het splitsen worden ze teruggewisseld. Fysieke eigenschappen blijven bij het voertuig, zoals `DrivingBackwards`, prototype en laadstation per wagon.
+- **NewGRF-koppelcallback:** de callback `CBID_TRAIN_ALLOW_WAGON_ATTACH` wordt bij koppelen bewust **niet** gecontroleerd. Die callback is bedoeld voor het samenstellen van treinen in het depot. Hij zou ook het koppelen van twee verschillende treinstellen weigeren, terwijl dat in de werkelijkheid gewoon kan. Alleen de maximale treinlengte wordt gecontroleerd.
 
-Dit gebeurt atomair binnen één tick. Alle voorwaarden worden vooraf gecontroleerd, zodat er nooit iets teruggedraaid hoeft te worden.
+### 4.3 `CoupleTrains(waiting, arriving, arriving_leads)`
 
-### 4.3 `SplitTrain(combination, unit)`
+1. Geef de padreserveringen van beide treinen vrij.
+2. Het passieve stel verlaat het station: `LeaveStation`, gaat naar de volgende order, en de huidige order wordt leeggemaakt.
+3. Het laadstation wordt per wagon vastgelegd (`LastLoadStationSeparate`).
+4. Het passieve stel telt niet meer mee in de groepsstatistiek. Zijn groep wordt bewaard in het record.
+5. Zo nodig worden de identiteiten verwisseld. Daarna worden de ketens gekoppeld: `SetNext` en `NormaliseSubtypes`.
+6. Daarna volgen `UpdateTrainGroupID`, `ConsistChanged(CCF_TRACK)`, `CheckBreakdownFlags`, `InvalidateVehicleTickCaches` en `ReserveTrackUnderConsist`.
 
-1. Knip de keten op de grenzen uit het record.
-2. Zet `GVSF_FRONT` en de gegevens uit het record terug.
-3. Draai het stel terug als het bij het koppelen omgedraaid is.
-4. Elk deel krijgt `NormaliseTrainHead`, reserveert het spoor onder zich opnieuw en doet `BeginLoading` met zijn eigen order.
-5. PBS regelt de volgorde van vertrekken.
+### 4.4 `SplitCombination(head)`
 
-## 5. Datamodel: koppelrecord
+1. De keten wordt geknipt vóór de passieve kop. Die krijgt weer `GVSF_FRONT`.
+2. Zijn groep wordt hersteld. Waren de identiteiten verwisseld, dan worden ze teruggewisseld.
+3. Daarna: groepsstatistiek, `ConsistChanged`, en de reserveringen voor beide treinen.
+4. De passieve trein krijgt een lege huidige order. Hoe hij daarna verdergaat (de `Splitsen`-order, laden), komt in fase 3.
 
-### 5.1 Record
+## 5. Datamodel
 
-Een nieuwe pool `CoupledUnit`, naar het voorbeeld van `OrderBackup` (`order_backup.h`). Het record erft van `BaseConsist`, dat al de naam, dispatch-records, `current_order_time`, `lateness_counter`, orderindexen en `vehicle_flags` bevat.
+### 5.1 Koppelrecord
+
+Een eenvoudige tabel `_train_couplings`, met als sleutel het kopvoertuig van de combinatie. Er is geen aparte pool, omdat de identiteit van het passieve stel op het voertuig zelf blijft staan.
 
 ```cpp
-struct CoupledUnit : CoupledUnitPool::PoolItem<&_coupled_unit_pool>, BaseConsist {
-	VehicleID leader;          ///< Kop van de combinatie waarin dit stel zit
-	VehicleID head;            ///< Oorspronkelijke kop van dit stel (nu niet-voorste voertuig)
-	VehicleID last;            ///< Laatste voertuig van dit stel
-	uint8_t position;          ///< Volgorde in de combinatie (0 = direct achter de leider)
-	bool reversed;             ///< Stel is bij het koppelen omgedraaid
-	OrderList *orders;         ///< Eigen orderlijst (gedeeld of niet)
-	Order current_order;
-	UnitID unitnumber;         ///< Blijft gereserveerd zolang het stel gekoppeld is
-	GroupID group_id;
-	TileIndex dest_tile;
-	StationID last_station_visited;
-	Money profit_this_year, profit_last_year, profit_lifetime;
-	/* speed_restriction, SpeedAdaptationExempt, unbunch_state, ... */
+struct TrainCoupling {
+	VehicleID head;             ///< Kop van de combinatie, draagt de identiteit van de leider
+	VehicleID passive_head;     ///< Kop van het tweede deel, draagt de identiteit van het passieve stel
+	GroupID passive_group;      ///< Groep van het passieve stel
+	bool identities_swapped;    ///< Identiteiten van de twee koppen zijn verwisseld bij het koppelen
 };
 ```
 
+- **Savegame:** chunk `TCPL`, feature `XSLFI_TRAIN_COUPLING`. De vlaggen `CoupledCombination` en `CoupledPassiveHead` gaan mee in de bestaande 32-bit treinvlaggen. Na het laden controleert `ValidateTrainCouplings` de consistentie.
+
 ### 5.2 Koppeling met de rest van het spel
 
-- **Gedeelde orderlijst:** de passieve kop moet uit `next_shared`, want hij is geen voorste voertuig meer. Het record registreert zich daarom apart bij de `OrderList`. Alle code die `FirstShared` of `NextShared` gebruikt, moet daarop nagelopen worden. Het gaat om afstand houden tussen treinen, vertrekborden, de lijst met gedeelde voertuigen en scheduled dispatch. **Dit is het grootste risico** (§10).
-- **Slots en tellers:** een stel blijft lid van zijn slots, op basis van het `VehicleID` van de oorspronkelijke kop.
-- **Tick:** de leider verhoogt bij elke tick ook `current_order_time` van al zijn records.
+- **Gedeelde orderlijst:** het passieve kopvoertuig blijft in `next_shared`, ook al is het geen voorste voertuig meer. Code die over gedeelde voertuigen loopt, moet hiermee overweg kunnen. Het gaat om afstand houden tussen treinen, vertrekborden, de lijst met gedeelde voertuigen en scheduled dispatch. Dat wordt nagelopen in fase 4, en blijft **het grootste risico** (§10).
+- **Slots en tellers:** een stel blijft lid van zijn slots, op basis van het `VehicleID` van zijn identiteit. Bij een identiteitswissel worden de slots meegewisseld (`TraceRestrictSwapVehicleOccupantInAllSlots`).
+- **Tick:** in fase 4 gaat de leider bij elke tick ook `current_order_time` van het passieve stel verhogen.
 - **Op `Train`:**
-  - `coupling_target` (`VehicleID`): de partner tijdens de aanrijding;
-  - vlag `VehicleRailFlag::CouplingApproach`;
-  - vlag `VehicleRailFlag::CoupledCombination`: snelle controle of een trein een combinatie is.
+  - vlag `VehicleRailFlag::CoupledCombination` (kop van de combinatie);
+  - vlag `VehicleRailFlag::CoupledPassiveHead` (kop van het passieve stel);
+  - in fase 2: `coupling_target` (`VehicleID`) en vlag `CouplingApproach`.
 
 ### 5.3 Hoogstens twee treinen per combinatie
 
@@ -196,10 +185,9 @@ struct CoupledUnit : CoupledUnitPool::PoolItem<&_coupled_unit_pool>, BaseConsist
   - Voorbeeld: dienst 1 bestaat uit twee stellen van twee wagons, die in het depot als één trein zijn samengesteld. Dienst 2 is één stel van drie wagons. Samen vormen ze **2-2-3**.
   - Bij het splitsen komen precies **2-2** en **3** terug.
   - Grenzen tussen fysieke stellen binnen één dienst worden niet bijgehouden en nooit gesplitst.
-- **Een trein die al gekoppeld is, kan niet nog een keer koppelen.** Dat wordt op drie niveaus afgedwongen:
-  1. **Command (`CmdInsertOrder` / `CmdModifyOrder`):** zolang een trein gekoppeld rijdt, weigert het spel om in zijn orderlijst een order met `Koppelen` in te voegen of een order daarin te veranderen. De foutmelding is: "Trein rijdt gekoppeld: kan geen tweede koppeling krijgen". Dit geldt voor de leider en voor het passieve stel.
-  2. **Statische controle (`PreInsertOrderCheck` / `CheckOrders`):** tussen een `Koppelen`-order en de eerstvolgende `Splitsen`-order in dezelfde lijst mag geen tweede `Koppelen`-order staan. Zo'n order wordt geweigerd bij het invoegen. Een bestaande lijst met dit probleem geeft een waarschuwing.
-  3. **Tijdens het spel:** komt een combinatie toch bij een `Koppelen`-order, bijvoorbeeld omdat de leider geen `Splitsen`-order heeft, dan geldt die order als **gewone stop zonder koppelen**, met een nieuwsbericht. Een combinatie is ook nooit een geschikte partner voor een aankomende trein (§3.2).
+- **Een trein die al gekoppeld is, kan niet nog een keer koppelen.** Dat wordt op twee niveaus afgedwongen. De orderlijst blijft altijd vrij aan te passen, ook terwijl een trein gekoppeld rijdt.
+  1. **Statische controle (`PreInsertOrderCheck` / `CmdModifyOrder` / `CheckOrders`):** tussen een `Koppelen`-order en de eerstvolgende `Splitsen`-order in dezelfde lijst mag geen tweede `Koppelen`-order staan. Zo'n order wordt geweigerd bij het invoegen of wijzigen, met de foutmelding "Eerst een Splitsen-order nodig voor een volgende Koppelen-order". Een bestaande lijst met dit probleem geeft een waarschuwing.
+  2. **Tijdens het spel:** komt een combinatie toch bij een `Koppelen`-order, bijvoorbeeld omdat de leider geen `Splitsen`-order heeft, dan geldt die order als **gewone stop zonder koppelen**, met een nieuwsbericht. Een combinatie is ook nooit een geschikte partner voor een aankomende trein (§3.2).
 - **Datamodel:** het record (§5.1) blijft per trein opgezet. Een latere uitbreiding naar meer treinen kan dus zonder dat de savegame verandert. Het veld `position` is altijd 0.
 
 ## 6. Bezet perron oprijden (PBS en realistisch remmen)
@@ -375,7 +363,7 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
 - De partner is te laat: beide treinen rijden alleen verder.
 - Kop tegen kop koppelen en splitsen in een kopstation.
 - Een trein van 2-2 koppelt met een trein van 3 tot 2-2-3. Bij het splitsen komen precies 2-2 en 3 terug.
-- Een tweede `Koppelen`-order invoegen bij een gekoppelde trein wordt geweigerd. Een combinatie bij een `Koppelen`-order stopt gewoon en geeft een nieuwsbericht.
+- Een tweede `Koppelen`-order vóór een `Splitsen`-order wordt geweigerd. De orderlijst van een gekoppelde trein blijft wel vrij te bewerken. Een combinatie bij een `Koppelen`-order stopt gewoon en geeft een nieuwsbericht.
 - Realistisch remmen met snelle treinen: niet doorschieten, geen crash, en ten hoogste 15 km/u op de laatste tegel.
 - Depot met en zonder de vlag, en controleren dat de vergrendeling werkt.
 - Opslaan en laden midden in een aanrijding en midden in een gekoppeld traject.

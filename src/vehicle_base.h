@@ -805,6 +805,7 @@ public:
 
 	void AddToShared(Vehicle *shared_chain);
 	void RemoveFromShared();
+	void SwapSharedOrderListMembership(Vehicle *other);
 
 	/**
 	 * Get the next vehicle of the shared vehicle chain.

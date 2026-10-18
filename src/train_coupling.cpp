@@ -1,0 +1,665 @@
+/*
+ * This file is part of OpenTTD.
+ * OpenTTD is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 2.
+ * OpenTTD is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See the GNU General Public License for more details. You should have received a copy of the GNU General Public License along with OpenTTD. If not, see <https://www.gnu.org/licenses/old-licenses/gpl-2.0>.
+ */
+
+/** @file train_coupling.cpp Coupling and splitting of trains at stations. */
+
+#include "stdafx.h"
+#include "train_coupling.h"
+#include "train_coupling_cmd.h"
+#include "train.h"
+#include "command_func.h"
+#include "company_base.h"
+#include "company_func.h"
+#include "economy_base.h"
+#include "group.h"
+#include "newgrf_debug.h"
+#include "order_backup.h"
+#include "order_base.h"
+#include "station_base.h"
+#include "station_map.h"
+#include "texteff.hpp"
+#include "tracerestrict.h"
+#include "vehicle_func.h"
+#include "vehicle_gui.h"
+#include "window_func.h"
+
+#include "table/strings.h"
+
+#include "safeguards.h"
+
+btree::btree_map<VehicleID, TrainCoupling> _train_couplings;
+
+/* Helpers from train_cmd.cpp */
+void NormaliseSubtypes(Train *chain);
+
+/** Vehicle flags which belong to the train identity (service), and not to the physical vehicles. */
+static constexpr VehicleFlags VEHICLE_FLAGS_IDENTITY = {
+	VehicleFlag::TimetableStarted, VehicleFlag::AutofillTimetable, VehicleFlag::AutofillPreserveWaitTime,
+	VehicleFlag::PathfinderLost, VehicleFlag::ServiceIntervalIsCustom, VehicleFlag::ServiceIntervalIsPercent,
+	VehicleFlag::SeparationActive, VehicleFlag::ScheduledDispatch, VehicleFlag::TimetableSeparation,
+	VehicleFlag::AutomateTimetable, VehicleFlag::HaveSlot, VehicleFlag::ConditionalOrderWait, VehicleFlag::ReplacementPending,
+	VehicleFlag::LoadingFinished, VehicleFlag::StopLoading,
+};
+
+/**
+ * Get the coupling state of a combination.
+ * @param head The head of the combination.
+ * @return The coupling state, or nullptr if the train is not a combination.
+ */
+const TrainCoupling *GetTrainCoupling(const Train *head)
+{
+	if (!head->flags.Test(VehicleRailFlag::CoupledCombination)) return nullptr;
+	auto it = _train_couplings.find(head->index);
+	return it != _train_couplings.end() ? &it->second : nullptr;
+}
+
+/**
+ * Is this train a combination of two coupled trains?
+ * @param head The head of the train.
+ * @return True if the train is a combination.
+ */
+bool IsTrainCoupled(const Train *head)
+{
+	return head->flags.Test(VehicleRailFlag::CoupledCombination);
+}
+
+/**
+ * Get the head of the passive train of a combination.
+ * @param head The head of the combination.
+ * @return The head of the passive train, or nullptr if the train is not a combination.
+ */
+Train *GetCoupledPassiveHead(const Train *head)
+{
+	const TrainCoupling *tc = GetTrainCoupling(head);
+	return tc != nullptr ? Train::Get(tc->passive_head) : nullptr;
+}
+
+/**
+ * Get the head of the combination of which this vehicle is the passive head.
+ * @param passive_head The head of the passive train.
+ * @return The head of the combination, or nullptr if the vehicle is not a passive head.
+ */
+Train *GetCouplingCombinationHead(const Train *passive_head)
+{
+	if (!passive_head->flags.Test(VehicleRailFlag::CoupledPassiveHead)) return nullptr;
+	return passive_head->First();
+}
+
+/**
+ * Swap the identities (orders, timetable, unit number, name, group, statistics, loading state, ...) of two train heads.
+ * The physical vehicles stay where they are.
+ * @param a The first head.
+ * @param b The second head.
+ */
+static void SwapTrainIdentities(Train *a, Train *b)
+{
+	/* Only the identity flags are swapped, physical vehicle flags stay with the vehicle. */
+	const VehicleFlags a_identity_flags = a->vehicle_flags & VEHICLE_FLAGS_IDENTITY;
+	const VehicleFlags b_identity_flags = b->vehicle_flags & VEHICLE_FLAGS_IDENTITY;
+	a->vehicle_flags.Reset(VEHICLE_FLAGS_IDENTITY).Set(b_identity_flags);
+	b->vehicle_flags.Reset(VEHICLE_FLAGS_IDENTITY).Set(a_identity_flags);
+
+	std::swap(a->name, b->name);
+	std::swap(a->dispatch_records, b->dispatch_records);
+	std::swap(a->current_order_time, b->current_order_time);
+	std::swap(a->lateness_counter, b->lateness_counter);
+	std::swap(a->timetable_start, b->timetable_start);
+	std::swap(a->service_interval, b->service_interval);
+	std::swap(a->cur_real_order_index, b->cur_real_order_index);
+	std::swap(a->cur_implicit_order_index, b->cur_implicit_order_index);
+	std::swap(a->cur_timetable_order_index, b->cur_timetable_order_index);
+
+	a->SwapSharedOrderListMembership(b);
+
+	std::swap(a->unitnumber, b->unitnumber);
+	std::swap(a->group_id, b->group_id);
+	std::swap(a->current_order, b->current_order);
+	std::swap(a->dest_tile, b->dest_tile);
+	std::swap(a->profit_this_year, b->profit_this_year);
+	std::swap(a->profit_last_year, b->profit_last_year);
+	std::swap(a->profit_lifetime, b->profit_lifetime);
+	std::swap(a->current_loading_time, b->current_loading_time);
+	std::swap(a->last_station_visited, b->last_station_visited);
+	std::swap(a->load_unload_ticks, b->load_unload_ticks);
+	std::swap(a->unbunch_state, b->unbunch_state);
+	std::swap(a->speed_restriction, b->speed_restriction);
+	{
+		const bool a_stopped = a->vehstatus.Test(VehState::Stopped);
+		a->vehstatus.Set(VehState::Stopped, b->vehstatus.Test(VehState::Stopped));
+		b->vehstatus.Set(VehState::Stopped, a_stopped);
+	}
+	{
+		const bool a_exempt = a->flags.Test(VehicleRailFlag::SpeedAdaptationExempt);
+		a->flags.Set(VehicleRailFlag::SpeedAdaptationExempt, b->flags.Test(VehicleRailFlag::SpeedAdaptationExempt));
+		b->flags.Set(VehicleRailFlag::SpeedAdaptationExempt, a_exempt);
+	}
+
+	/* Loading state */
+	std::swap(a->cargo_payment, b->cargo_payment);
+	if (a->cargo_payment != nullptr) a->cargo_payment->front = a;
+	if (b->cargo_payment != nullptr) b->cargo_payment->front = b;
+	HideFillingPercent(&a->fill_percent_te_id);
+	HideFillingPercent(&b->fill_percent_te_id);
+	for (Station *st : Station::Iterate()) {
+		for (Vehicle *&v : st->loading_vehicles) {
+			if (v == a) {
+				v = b;
+			} else if (v == b) {
+				v = a;
+			}
+		}
+	}
+
+	if (a->vehicle_flags.Test(VehicleFlag::HaveSlot) || b->vehicle_flags.Test(VehicleFlag::HaveSlot)) {
+		TraceRestrictSwapVehicleOccupantInAllSlots(a->index, b->index);
+	}
+
+	a->InvalidateNewGRFCacheOfChain();
+	b->InvalidateNewGRFCacheOfChain();
+}
+
+/**
+ * Close the windows which show a train head, used when its identity changes or it stops being a primary vehicle.
+ * @param v The vehicle.
+ */
+static void CloseTrainHeadWindows(const Train *v)
+{
+	CloseWindowById(WindowClass::VehicleView, v->index);
+	CloseWindowById(WindowClass::VehicleOrders, v->index);
+	CloseWindowById(WindowClass::VehicleRefit, v->index);
+	CloseWindowById(WindowClass::VehicleDetails, v->index);
+	CloseWindowById(WindowClass::VehicleTimetable, v->index);
+	CloseWindowById(WindowClass::ScheduledDispatchSlots, v->index);
+	CloseWindowById(WindowClass::VehicleOrderImportErrors, v->index);
+	DeleteNewGRFInspectWindow(GrfSpecFeature::Trains, v->index.base());
+}
+
+/** Result of the geometric check whether two trains can be coupled. */
+struct CouplingArrangement {
+	Train *first = nullptr;  ///< Head of the train which forms the first part of the combination chain.
+	Train *second = nullptr; ///< Head of the train which forms the second part of the combination chain.
+};
+
+/**
+ * Check whether vehicle \a next is positioned directly behind vehicle \a prev, as if they were consecutive vehicles in a chain.
+ * @param prev The last vehicle of the first part.
+ * @param next The first vehicle of the second part.
+ * @return True if the vehicles are touching and aligned.
+ */
+static bool AreVehiclesConsecutive(const Train *prev, const Train *next)
+{
+	if (prev->direction != next->direction || !IsDiagonalDirection(prev->direction)) return false;
+	if (prev->z_pos != next->z_pos) return false;
+	if ((prev->track | next->track) & (TRACK_BIT_WORMHOLE | TRACK_BIT_DEPOT)) return false;
+
+	const TileIndexDiffC diff = TileIndexDiffCByDiagDir(DirToDiagDir(prev->direction));
+	const int x_diff = prev->x_pos - next->x_pos;
+	const int y_diff = prev->y_pos - next->y_pos;
+
+	/* The next vehicle must be behind the previous one on the same line. */
+	int dist;
+	if (diff.x != 0) {
+		if (y_diff != 0) return false;
+		dist = x_diff * diff.x;
+	} else {
+		if (x_diff != 0) return false;
+		dist = y_diff * diff.y;
+	}
+
+	/* Expected distance between the centres of consecutive vehicles, see Train::CalcNextVehicleOffset. */
+	const int expected_fwd = prev->gcache.cached_veh_length / 2 + (next->gcache.cached_veh_length + 1) / 2;
+	const int expected_bwd = (prev->gcache.cached_veh_length + 1) / 2 + next->gcache.cached_veh_length / 2;
+	return dist == expected_fwd || dist == expected_bwd;
+}
+
+/**
+ * Find how two trains can be arranged into one chain.
+ * @param a The first train.
+ * @param b The second train.
+ * @return The arrangement, or an empty arrangement if the trains are not positioned such that they can be coupled.
+ */
+static CouplingArrangement FindCouplingArrangement(Train *a, Train *b)
+{
+	if (AreVehiclesConsecutive(a->Last(), b)) return { a, b };
+	if (AreVehiclesConsecutive(b->Last(), a)) return { b, a };
+	return {};
+}
+
+/**
+ * Check whether all vehicles of a train are inside platforms of the given station.
+ * @param t The train.
+ * @param station The station.
+ * @return True if the train is completely within the station.
+ */
+static bool IsTrainCompletelyInStation(const Train *t, StationID station)
+{
+	for (const Train *u = t; u != nullptr; u = u->Next()) {
+		if (!IsRailStationTile(u->tile) || GetStationIndex(u->tile) != station) return false;
+	}
+	return true;
+}
+
+/**
+ * Check common preconditions for a train taking part in coupling.
+ * @param t The train.
+ * @return Error or success.
+ */
+static CommandCost CheckTrainCanTakePartInCoupling(const Train *t)
+{
+	if (!t->IsFrontEngine()) return CMD_ERROR;
+	if (t->vehstatus.Test(VehState::Crashed)) return CMD_ERROR;
+	if (t->IsVirtual()) return CMD_ERROR;
+	if (t->cur_speed != 0) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+	if (t->flags.Any(VehicleRailFlagsIsBroken)) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+	if (!IsRailStationTile(t->tile) || !IsTrainCompletelyInStation(t, GetStationIndex(t->tile))) {
+		return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+	}
+	return CommandCost();
+}
+
+/**
+ * Check whether two trains can be coupled.
+ * @param waiting The train which is waiting in the platform.
+ * @param arriving The train which arrived to couple.
+ * @return Error or success.
+ */
+CommandCost CheckCanCoupleTrains(const Train *waiting, const Train *arriving)
+{
+	if (waiting == arriving) return CMD_ERROR;
+	if (waiting->owner != arriving->owner) return CMD_ERROR;
+
+	CommandCost ret = CheckTrainCanTakePartInCoupling(waiting);
+	if (ret.Failed()) return ret;
+	ret = CheckTrainCanTakePartInCoupling(arriving);
+	if (ret.Failed()) return ret;
+
+	if (GetStationIndex(waiting->tile) != GetStationIndex(arriving->tile)) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+
+	if (IsTrainCoupled(waiting) || IsTrainCoupled(arriving)) return CommandCost(STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED);
+
+	CouplingArrangement arrangement = FindCouplingArrangement(const_cast<Train *>(waiting), const_cast<Train *>(arriving));
+	if (arrangement.first == nullptr) return CommandCost(STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT);
+
+	if (static_cast<uint>(waiting->gcache.cached_total_length + arriving->gcache.cached_total_length) > static_cast<uint>(_settings_game.vehicle.max_train_length * TILE_SIZE)) {
+		return CommandCost(STR_ERROR_TRAIN_TOO_LONG);
+	}
+
+	return CommandCost();
+}
+
+/**
+ * Copy the last loading station of the head to all vehicles of the train, if the vehicles do not have it separately.
+ * @param head The head of the train.
+ */
+static void SeparateLastLoadingStation(Train *head)
+{
+	if (head->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate)) return;
+	for (Train *u = head->Next(); u != nullptr; u = u->Next()) {
+		u->last_loading_station = head->last_loading_station;
+		u->last_loading_tick = head->last_loading_tick;
+	}
+	head->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
+}
+
+/**
+ * Let a train which is about to be coupled as passive train leave the station.
+ * @param t The train.
+ */
+static void LeaveStationForCoupling(Train *t)
+{
+	if (t->current_order.IsAnyLoadingType()) {
+		const StationID station = t->last_station_visited;
+		t->LeaveStation();
+
+		/* Advance to the next order if we were loading at the current one, as is done when leaving normally. */
+		const Order *order = t->GetOrder(t->cur_implicit_order_index);
+		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) {
+			t->IncrementImplicitOrderIndex();
+		}
+	}
+	t->current_order.Free();
+	HideFillingPercent(&t->fill_percent_te_id);
+}
+
+/**
+ * Couple two trains into one combination.
+ * @param waiting The train which is waiting in the platform.
+ * @param arriving The train which arrived to couple.
+ * @param arriving_leads Whether the arriving train leads the combination.
+ * @pre CheckCanCoupleTrains(waiting, arriving).Succeeded()
+ */
+void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
+{
+	CouplingArrangement arrangement = FindCouplingArrangement(waiting, arriving);
+	assert(arrangement.first != nullptr);
+
+	Train *first = arrangement.first;
+	Train *second = arrangement.second;
+	Train *leader = arriving_leads ? arriving : waiting;
+	Train *passive = arriving_leads ? waiting : arriving;
+
+	/* Free any path reservations, they are re-made below for the whole combination. */
+	for (Train *t : { first, second }) {
+		FreeTrainTrackReservation(t);
+		t->lookahead.reset();
+		t->force_proceed = TFP_NONE;
+		t->flags.Reset({VehicleRailFlag::Stuck, VehicleRailFlag::Reversing, VehicleRailFlag::LeavingStation});
+		t->wait_counter = 0;
+	}
+
+	LeaveStationForCoupling(passive);
+
+	SeparateLastLoadingStation(first);
+	SeparateLastLoadingStation(second);
+
+	/* The passive train stops being a primary vehicle. */
+	GroupStatistics::CountVehicle(passive, -1);
+
+	TrainCoupling tc{};
+	tc.passive_group = passive->group_id;
+	tc.identities_swapped = (leader == second);
+
+	CloseTrainHeadWindows(second);
+	if (tc.identities_swapped) {
+		CloseTrainHeadWindows(first);
+		SwapTrainIdentities(first, second);
+	}
+
+	/* The combination keeps the driving direction of its first part. */
+	const bool driving_backwards = first->vehicle_flags.Test(VehicleFlag::DrivingBackwards);
+	for (Train *u = second; u != nullptr; u = u->Next()) {
+		u->vehicle_flags.Set(VehicleFlag::DrivingBackwards, driving_backwards);
+	}
+
+	first->Last()->SetNext(second);
+	NormaliseSubtypes(first);
+
+	second->flags.Set(VehicleRailFlag::CoupledPassiveHead);
+	first->flags.Set(VehicleRailFlag::CoupledCombination);
+
+	tc.head = first->index;
+	tc.passive_head = second->index;
+	_train_couplings[first->index] = tc;
+
+	UpdateTrainGroupID(first);
+	first->ConsistChanged(CCF_TRACK);
+	CheckBreakdownFlags(first);
+	first->flags.Set(VehicleRailFlag::ConsistSpeedReduction);
+	InvalidateVehicleTickCaches();
+
+	first->ReserveTrackUnderConsist();
+
+	first->MarkDirty();
+	SetWindowDirty(WindowClass::VehicleView, first->index);
+	SetWindowDirty(WindowClass::VehicleDetails, first->index);
+	InvalidateWindowData(WindowClass::VehicleRefit, first->index, VIWD_CONSIST_CHANGED);
+	SetWindowDirty(WindowClass::Company, first->owner);
+	InvalidateVehicleListWindows(VehicleType::Train);
+}
+
+/**
+ * Check whether a combination can be split.
+ * @param head The head of the combination.
+ * @return Error or success.
+ */
+CommandCost CheckCanSplitCombination(const Train *head)
+{
+	if (!head->IsFrontEngine()) return CMD_ERROR;
+	if (!IsTrainCoupled(head)) return CommandCost(STR_ERROR_TRAIN_COUPLING_NOT_COUPLED);
+	if (head->vehstatus.Test(VehState::Crashed)) return CMD_ERROR;
+	if (head->cur_speed != 0) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+	for (const Train *u = head; u != nullptr; u = u->Next()) {
+		if (u->track & (TRACK_BIT_WORMHOLE | TRACK_BIT_DEPOT)) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+	}
+	return CommandCost();
+}
+
+/**
+ * Split a combination back into the two original trains.
+ * @param head The head of the combination.
+ * @return The train which was the passive train.
+ * @pre CheckCanSplitCombination(head).Succeeded()
+ */
+Train *SplitCombination(Train *head)
+{
+	auto it = _train_couplings.find(head->index);
+	assert(it != _train_couplings.end());
+	const TrainCoupling tc = it->second;
+	_train_couplings.erase(it);
+
+	Train *second = Train::Get(tc.passive_head);
+	assert(second->First() == head);
+
+	FreeTrainTrackReservation(head);
+	head->lookahead.reset();
+
+	second->Previous()->SetNext(nullptr);
+	NormaliseSubtypes(second);
+
+	head->flags.Reset(VehicleRailFlag::CoupledCombination);
+	second->flags.Reset(VehicleRailFlag::CoupledPassiveHead);
+
+	/* Restore the group of the passive train, which was overwritten by the group of the combination. */
+	second->group_id = tc.passive_group;
+
+	Train *passive = second;
+	if (tc.identities_swapped) {
+		CloseTrainHeadWindows(head);
+		SwapTrainIdentities(head, second);
+		passive = head;
+	}
+
+	for (Train *t : { head, second }) {
+		UpdateTrainGroupID(t);
+		t->ConsistChanged(CCF_TRACK);
+		CheckBreakdownFlags(t);
+		t->flags.Set(VehicleRailFlag::ConsistSpeedReduction);
+		t->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
+	}
+
+	/* The passive train is a primary vehicle again, it continues in the same running state as the combination. */
+	GroupStatistics::CountVehicle(passive, 1);
+	passive->current_order.Free();
+	Train *leader = (passive == head) ? second : head;
+	passive->vehstatus.Set(VehState::Stopped, leader->vehstatus.Test(VehState::Stopped));
+
+	InvalidateVehicleTickCaches();
+
+	head->ReserveTrackUnderConsist();
+	second->ReserveTrackUnderConsist();
+
+	for (Train *t : { head, second }) {
+		t->MarkDirty();
+		SetWindowDirty(WindowClass::VehicleView, t->index);
+		SetWindowDirty(WindowClass::VehicleDetails, t->index);
+		InvalidateWindowData(WindowClass::VehicleRefit, t->index, VIWD_CONSIST_CHANGED);
+	}
+	SetWindowDirty(WindowClass::Company, head->owner);
+	InvalidateVehicleListWindows(VehicleType::Train);
+
+	return passive;
+}
+
+/**
+ * A vehicle which might take part in a coupling is about to be deleted.
+ * @param v The vehicle.
+ */
+void OnTrainCouplingVehicleDeleted(Train *v)
+{
+	if (v->flags.Test(VehicleRailFlag::CoupledCombination)) {
+		_train_couplings.erase(v->index);
+		v->flags.Reset(VehicleRailFlag::CoupledCombination);
+	}
+	if (v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+		for (auto it = _train_couplings.begin(); it != _train_couplings.end(); ++it) {
+			if (it->second.passive_head == v->index) {
+				Train *head = Train::GetIfValid(it->second.head);
+				if (head != nullptr) head->flags.Reset(VehicleRailFlag::CoupledCombination);
+				_train_couplings.erase(it);
+				break;
+			}
+		}
+		v->flags.Reset(VehicleRailFlag::CoupledPassiveHead);
+	}
+}
+
+/**
+ * Validate the coupling state against the vehicles, used after loading a game.
+ * Invalid entries are removed.
+ */
+void ValidateTrainCouplings()
+{
+	for (auto it = _train_couplings.begin(); it != _train_couplings.end();) {
+		const TrainCoupling &tc = it->second;
+		Train *head = Train::GetIfValid(tc.head);
+		Train *passive = Train::GetIfValid(tc.passive_head);
+		if (head == nullptr || passive == nullptr || !head->IsFrontEngine() || passive->First() != head ||
+				!head->flags.Test(VehicleRailFlag::CoupledCombination) || !passive->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+			Debug(sl, 0, "Removing invalid train coupling: head {}, passive head {}", tc.head, tc.passive_head);
+			if (head != nullptr) head->flags.Reset(VehicleRailFlag::CoupledCombination);
+			if (passive != nullptr) passive->flags.Reset(VehicleRailFlag::CoupledPassiveHead);
+			it = _train_couplings.erase(it);
+		} else {
+			++it;
+		}
+	}
+	for (Train *t : Train::Iterate()) {
+		if (t->flags.Test(VehicleRailFlag::CoupledCombination) && _train_couplings.find(t->index) == _train_couplings.end()) {
+			t->flags.Reset(VehicleRailFlag::CoupledCombination);
+		}
+	}
+}
+
+/**
+ * Debug command: cut a train which is not in a depot into two trains, for testing coupling.
+ * The rear part becomes a new train which shares the orders of the original train.
+ * @param flags Type of operation.
+ * @param veh_id The first vehicle of the rear part.
+ * @return The cost of this operation or an error.
+ */
+CommandCost CmdCutTrain(DoCommandFlags flags, VehicleID veh_id)
+{
+	Train *v = Train::GetIfValid(veh_id);
+	if (v == nullptr || v->IsVirtual()) return CMD_ERROR;
+
+	CommandCost ret = CheckOwnership(v->owner);
+	if (ret.Failed()) return ret;
+
+	Train *head = v->First();
+	if (head == v || !head->IsFrontEngine()) return CMD_ERROR;
+	if (!v->IsEngine() || v->IsArticulatedPart() || v->IsRearDualheaded()) return CMD_ERROR;
+	if (IsTrainCoupled(head)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
+	if (head->vehstatus.Test(VehState::Crashed)) return CMD_ERROR;
+	if (head->cur_speed != 0) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+
+	/* Both parts of multiheaded engines must end up in the same train. */
+	for (Train *u = head; u != nullptr; u = u->Next()) {
+		if (u->track & (TRACK_BIT_WORMHOLE | TRACK_BIT_DEPOT)) return CommandCost(STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION);
+		if (u->IsMultiheaded()) {
+			bool u_rear = false;
+			bool other_rear = false;
+			for (Train *w = v; w != nullptr; w = w->Next()) {
+				if (w == u) u_rear = true;
+				if (w == u->other_multiheaded_part) other_rear = true;
+			}
+			if (u_rear != other_rear) return CMD_ERROR;
+		}
+	}
+
+	if (GetFreeUnitNumber(VehicleType::Train) > _settings_game.vehicle.max_trains) return CommandCost(STR_ERROR_TOO_MANY_VEHICLES_IN_GAME);
+
+	if (flags.Test(DoCommandFlag::Execute)) {
+		FreeTrainTrackReservation(head);
+		head->lookahead.reset();
+		SeparateLastLoadingStation(head);
+
+		v->Previous()->SetNext(nullptr);
+		NormaliseSubtypes(v);
+
+		v->unitnumber = Company::Get(v->owner)->freeunits[v->type].UseID(GetFreeUnitNumber(VehicleType::Train));
+		v->CopyConsistPropertiesFrom(head);
+		v->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
+		v->current_order.Free();
+		v->vehstatus.Set(VehState::Stopped, head->vehstatus.Test(VehState::Stopped));
+		v->orders = head->orders;
+		v->AddToShared(head);
+		v->group_id = head->group_id;
+		v->last_station_visited = head->last_station_visited;
+		SetTrainGroupID(v, head->group_id);
+
+		for (Train *t : { head, v }) {
+			t->ConsistChanged(CCF_TRACK);
+			CheckBreakdownFlags(t);
+			t->flags.Set(VehicleRailFlag::ConsistSpeedReduction);
+		}
+		GroupStatistics::CountVehicle(v, 1);
+		InvalidateVehicleTickCaches();
+
+		head->ReserveTrackUnderConsist();
+		v->ReserveTrackUnderConsist();
+
+		for (Train *t : { head, v }) {
+			t->MarkDirty();
+			SetWindowDirty(WindowClass::VehicleView, t->index);
+			SetWindowDirty(WindowClass::VehicleDetails, t->index);
+		}
+		InvalidateWindowData(WindowClass::VehicleOrders, head->index, VIWD_MODIFY_ORDERS);
+		SetWindowDirty(WindowClass::Company, head->owner);
+		InvalidateVehicleListWindows(VehicleType::Train);
+	}
+
+	return CommandCost();
+}
+
+/**
+ * Couple two trains which are stopped next to each other in a station.
+ * @param flags Type of operation.
+ * @param waiting_id The train which is waiting in the platform.
+ * @param arriving_id The train which arrived to couple.
+ * @param arriving_leads Whether the arriving train leads the combination.
+ * @return The cost of this operation or an error.
+ */
+CommandCost CmdCoupleTrains(DoCommandFlags flags, VehicleID waiting_id, VehicleID arriving_id, bool arriving_leads)
+{
+	Train *waiting = Train::GetIfValid(waiting_id);
+	Train *arriving = Train::GetIfValid(arriving_id);
+	if (waiting == nullptr || arriving == nullptr) return CMD_ERROR;
+
+	CommandCost ret = CheckOwnership(waiting->owner);
+	if (ret.Failed()) return ret;
+	ret = CheckOwnership(arriving->owner);
+	if (ret.Failed()) return ret;
+
+	ret = CheckCanCoupleTrains(waiting, arriving);
+	if (ret.Failed()) return ret;
+
+	if (flags.Test(DoCommandFlag::Execute)) CoupleTrains(waiting, arriving, arriving_leads);
+
+	return CommandCost();
+}
+
+/**
+ * Split a combination of coupled trains.
+ * @param flags Type of operation.
+ * @param veh_id The head of the combination.
+ * @return The cost of this operation or an error.
+ */
+CommandCost CmdSplitCoupledTrain(DoCommandFlags flags, VehicleID veh_id)
+{
+	Train *head = Train::GetIfValid(veh_id);
+	if (head == nullptr) return CMD_ERROR;
+
+	CommandCost ret = CheckOwnership(head->owner);
+	if (ret.Failed()) return ret;
+
+	ret = CheckCanSplitCombination(head);
+	if (ret.Failed()) return ret;
+
+	if (flags.Test(DoCommandFlag::Execute)) SplitCombination(head);
+
+	return CommandCost();
+}

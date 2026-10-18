@@ -67,6 +67,7 @@
 #include "event_logs.h"
 #include "misc_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "vehicle_cmd.h"
 #include "tile_cmd.h"
 #include "script/api/script_event_types.hpp"
@@ -1204,6 +1205,7 @@ void Vehicle::PreDestructor()
 		TraceRestrictRemoveVehicleFromAllSlots(this->index);
 		this->vehicle_flags.Reset(VehicleFlag::HaveSlot);
 	}
+	if (this->type == VehicleType::Train) OnTrainCouplingVehicleDeleted(Train::From(this));
 	if (this->type == VehicleType::Train && Train::From(this)->flags.Test(VehicleRailFlag::PendingSpeedRestriction)) {
 		_pending_speed_restriction_change_map.erase(this->index);
 		Train::From(this)->flags.Reset(VehicleRailFlag::PendingSpeedRestriction);
@@ -1280,6 +1282,7 @@ Vehicle::~Vehicle()
 void Vehicle::PreCleanPool()
 {
 	_pending_speed_restriction_change_map.clear();
+	_train_couplings.clear();
 }
 
 /**
@@ -1289,7 +1292,7 @@ void Vehicle::PreCleanPool()
 static void VehicleEnteredDepotThisTick(Vehicle *v)
 {
 	/* Template Replacement Setup stuff */
-	if (GetTemplateIDByGroupIDRecursive(v->group_id) != INVALID_TEMPLATE) {
+	if (GetTemplateIDByGroupIDRecursive(v->group_id) != INVALID_TEMPLATE && !(v->type == VehicleType::Train && IsTrainCoupled(Train::From(v)))) {
 		/* Vehicle should stop in the depot if it was in 'stopping' state */
 		_vehicles_to_templatereplace.insert(v->index);
 	}
@@ -4557,6 +4560,31 @@ void Vehicle::AddToShared(Vehicle *shared_chain)
 	if (this->next_shared != nullptr) this->next_shared->previous_shared = this;
 
 	shared_chain->orders->AddVehicle(this);
+}
+
+/**
+ * Swap the order list and the position in the shared vehicle chain of this vehicle with another vehicle.
+ * Used when the identities of two trains are swapped while coupling or splitting.
+ * @param other The vehicle to swap with.
+ */
+void Vehicle::SwapSharedOrderListMembership(Vehicle *other)
+{
+	/* Same order list (or both have none): the shared chain membership is identical. */
+	if (this->orders == other->orders) return;
+
+	std::swap(this->orders, other->orders);
+	std::swap(this->next_shared, other->next_shared);
+	std::swap(this->previous_shared, other->previous_shared);
+
+	for (Vehicle *v : { this, other }) {
+		if (v->orders == nullptr) continue;
+		if (v->next_shared != nullptr) v->next_shared->previous_shared = v;
+		if (v->previous_shared != nullptr) {
+			v->previous_shared->next_shared = v;
+		} else {
+			v->orders->ReplaceFirstSharedVehicle(v);
+		}
+	}
 }
 
 /**

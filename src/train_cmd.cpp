@@ -49,6 +49,7 @@
 #include "misc_cmd.h"
 #include "tile_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "vehicle_cmd.h"
 #include "tbtr_template_vehicle_cmd.h"
 #include "script/api/script_event_types.hpp"
@@ -1937,7 +1938,7 @@ static void NormaliseDualHeads(Train *t)
  * Normalise the sub types of the parts in this chain.
  * @param chain the chain to normalise.
  */
-static void NormaliseSubtypes(Train *chain)
+void NormaliseSubtypes(Train *chain)
 {
 	/* Nothing to do */
 	if (chain == nullptr) return;
@@ -2272,6 +2273,9 @@ CommandCost CmdMoveRailVehicle(DoCommandFlags flags, VehicleID src_veh, VehicleI
 
 	if (src->IsRearDualheaded()) return CommandCost(STR_ERROR_REAR_ENGINE_FOLLOW_FRONT);
 
+	/* The composition of coupled trains can not be changed. */
+	if (IsTrainCoupled(src_head) || (dst_head != nullptr && IsTrainCoupled(dst_head))) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
+
 	/* When moving all wagons, we can't have the same src_head and dst_head */
 	if (move_chain && src_head == dst_head) return CommandCost();
 
@@ -2458,6 +2462,9 @@ CommandCost CmdSellRailWagon(DoCommandFlags flags, Vehicle *t, bool sell_chain, 
 	Train *first = v->First();
 
 	if (v->IsRearDualheaded()) return CommandCost(STR_ERROR_REAR_ENGINE_FOLLOW_FRONT);
+
+	/* Coupled trains can not be sold, they have to be split first. */
+	if (IsTrainCoupled(first)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
 
 	/* First make a backup of the order of the train. That way we can do
 	 * whatever we want with the order and later on easily revert. */
@@ -3295,6 +3302,8 @@ CommandCost CmdReverseTrainDirection(DoCommandFlags flags, VehicleID veh_id, boo
 		}
 
 		Train *front = v->First();
+		if (IsTrainCoupled(front)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
+
 		/* make sure the vehicle is stopped in the depot */
 		if (!front->IsStoppedInDepot() && !front->IsVirtual()) {
 			return CommandCost(STR_ERROR_TRAINS_CAN_ONLY_BE_ALTERED_INSIDE_A_DEPOT);
@@ -7824,6 +7833,7 @@ CommandCost CmdTemplateReplaceVehicle(DoCommandFlags flags, VehicleID veh_id)
 	if (incoming == nullptr || !incoming->IsPrimaryVehicle() || !incoming->IsChainInDepot()) {
 		return CMD_ERROR;
 	}
+	if (IsTrainCoupled(incoming)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
 
 	Train *outgoing = incoming;
 	CommandCost cost = CmdTemplateReplaceVehicle(flags, incoming, outgoing);

@@ -2557,6 +2557,14 @@ STR_ABOUT_MENU_SHOW_TOGGLE_MODIFIER_KEYS                        :Modifier key wi
 
 STR_ERROR_CAN_T_CHANGE_SPEED_RESTRICTION                        :{WHITE}Can't change vehicle's speed restriction...
 
+STR_ERROR_CAN_T_COUPLE_TRAINS                                   :{WHITE}Can't couple trains...
+STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN                             :{WHITE}Can't split train...
+STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION             :{WHITE}... trains must be stopped inside a station platform
+STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... trains are not directly behind each other
+STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... train is already coupled to another train
+STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... train is not coupled to another train
+STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... coupled trains can only be refitted or started/stopped
+
 STR_WARNING_PASSWORD_SECURITY                                   :{YELLOW}Warning: Server administrators may be able to read any text entered here.
 STR_NETWORK_NEED_COMPANY_PASSWORD_CAPTION                       :{WHITE}Company is protected. Enter password
 STR_NETWORK_CLIENT_LIST_ADMIN_COMPANY_UNLOCK                    :Password unlock
