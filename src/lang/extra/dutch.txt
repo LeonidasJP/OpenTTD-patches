@@ -119,3 +119,11 @@ STR_INTRO_TOOLTIP_NEWGRF_SETTINGS                               :{BLACK}NewGRF-i
 STR_INTRO_TOOLTIP_AI_SETTINGS                                   :{BLACK}AI-instellingen openen
 STR_INTRO_TOOLTIP_GAMESCRIPT_SETTINGS                           :{BLACK}Spelscript-instellingen openen
 STR_INTRO_CAPTION_TRADITIONAL                                   :{WHITE}OpenTTD {REV}
+
+STR_ERROR_CAN_T_COUPLE_TRAINS                                   :{WHITE}Kan treinen niet koppelen...
+STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN                             :{WHITE}Kan trein niet splitsen...
+STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION             :{WHITE}... treinen moeten stilstaan langs een perron
+STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... treinen staan niet direct achter elkaar
+STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... trein is al gekoppeld aan een andere trein
+STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... trein is niet gekoppeld aan een andere trein
+STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... gekoppelde treinen kunnen alleen omgebouwd of gestart/gestopt worden

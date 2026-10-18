@@ -28,6 +28,7 @@
 #include "group_cmd.h"
 #include "order_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "vehicle_cmd.h"
 #include "script/api/script_event_types.hpp"
 
@@ -947,6 +948,8 @@ CommandCost CmdAutoreplaceVehicle(DoCommandFlags flags, VehicleID veh_id, bool s
 		if (t->IsArticulatedPart() || t->IsRearDualheaded()) return CMD_ERROR;
 		free_wagon = !t->IsFrontEngine();
 		if (free_wagon && t->First()->IsFrontEngine()) return CMD_ERROR;
+		/* The composition of coupled trains can not be changed, silently skip them. */
+		if (IsTrainCoupled(t)) return CommandCost();
 	} else {
 		if (!v->IsPrimaryVehicle()) return CMD_ERROR;
 	}

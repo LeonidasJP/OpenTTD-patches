@@ -620,7 +620,8 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 		}
 
 		if (part_of_load && v->unitnumber != 0) {
-			if (v->IsPrimaryVehicle()) {
+			/* The head of a passive train in a coupled combination keeps its unit number. */
+			if (v->IsPrimaryVehicle() || (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead))) {
 				Company::Get(v->owner)->freeunits[v->type].UseID(v->unitnumber);
 			} else {
 				v->unitnumber = 0;
