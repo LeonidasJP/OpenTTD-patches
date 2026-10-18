@@ -831,6 +831,7 @@ SettingsContainer &GetSettingsTree()
 				departureboards->Add(new SettingEntry("gui.departure_smart_terminus"));
 				departureboards->Add(new SettingEntry("gui.departure_conditionals"));
 				departureboards->Add(new SettingEntry("gui.departure_merge_identical"));
+				departureboards->Add(new SettingEntry("gui.departure_show_missed_dispatch_cancelled"));
 			}
 
 			SettingsPage *timetable = interface->Add(new SettingsPage(STR_CONFIG_SETTING_INTERFACE_TIMETABLE));

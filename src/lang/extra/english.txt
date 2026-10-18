@@ -1523,6 +1523,8 @@ STR_CONFIG_DEPARTURE_CONDITIONALS_2                             :assuming they w
 STR_CONFIG_DEPARTURE_CONDITIONALS_3                             :assuming they will not be taken
 STR_CONFIG_DEPARTURE_MERGE_IDENTICAL                            :Merge identical entries: {STRING2}
 STR_CONFIG_DEPARTURE_MERGE_IDENTICAL_HELPTEXT                   :Whether identical departure board entries should be merged into a single one
+STR_CONFIG_DEPARTURE_SHOW_MISSED_DISPATCH_CANCELLED             :Show missed scheduled dispatch departures as cancelled: {STRING2}
+STR_CONFIG_DEPARTURE_SHOW_MISSED_DISPATCH_CANCELLED_HELPTEXT    :Whether scheduled dispatch departures which a vehicle would have made if on time, but which it is expected to miss due to lateness, should be shown as cancelled
 
 STR_WAYPOINT_VIEW_HIDE_VIEWPORT_LABEL                           :{BLACK}Hide the name label for this waypoint
 

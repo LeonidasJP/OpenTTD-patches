@@ -46,9 +46,27 @@
 
 static constexpr Ticks INVALID_DEPARTURE_TICKS = INT32_MIN;
 
+/* How long a missed scheduled dispatch departure remains visible after its scheduled time: 30 real-time seconds at normal game speed */
+static constexpr Ticks MISSED_DISPATCH_VISIBLE_TICKS = 30 * TICKS_PER_SECOND;
+
+struct ScheduledDispatchCacheEntry {
+	btree::btree_set<StateTicks> used;   ///< Slots used by a vehicle
+	btree::btree_set<StateTicks> missed; ///< Slots which a vehicle is expected to miss due to lateness
+};
+
 /* A cache of used departure time for scheduled dispatch in departure time calculation */
-using ScheduledDispatchCache = btree::btree_map<const DispatchSchedule *, btree::btree_set<StateTicks>>;
+using ScheduledDispatchCache = btree::btree_map<const DispatchSchedule *, ScheduledDispatchCacheEntry>;
 using ScheduledDispatchVehicleRecords = btree::btree_map<uint, LastDispatchRecord>;
+
+/** A scheduled dispatch slot which a vehicle would have used if on time, but is expected to miss due to lateness. */
+struct MissedDispatchSlot {
+	const DispatchSchedule *ds = nullptr; ///< Dispatch schedule, nullptr if no slot was missed
+	StateTicks slot{};                    ///< Missed slot
+	StateTicksDelta shift{};              ///< Missed slot minus the slot which is actually used
+	int slot_index = -1;                  ///< Index of the missed slot in the dispatch schedule
+
+	inline bool IsValid() const { return this->ds != nullptr; }
+};
 
 CallAtTargetID CallAtTargetID::FromOrder(const Order *order)
 {
@@ -92,6 +110,7 @@ struct OrderDate {
 	Ticks lateness_post_adjust = 0;                   ///< Lateness adjustment to apply after this order
 	ScheduledDispatchVehicleRecords dispatch_records; ///< Dispatch records for this vehicle
 	std::vector<ArrivalHistoryEntry> arrival_history;
+	MissedDispatchSlot missed_dispatch;               ///< Dispatch slot missed due to lateness at the most recent dispatch order, if any
 
 	uint order_iterations_remaining = 0; ///< For use in AdvanceLiveDepartureOrderToNextCandidate
 	bool require_travel_time = false;    ///< For use in AdvanceLiveDepartureOrderToNextCandidate
@@ -240,8 +259,16 @@ static bool VehicleOrderRequiresScheduledDispatch(const Vehicle *v, const Order 
 	return !(arrived_at_timing_point && is_current_implicit_order(order));
 }
 
+/**
+ * Set the next departure time of a vehicle, handling scheduled dispatch orders.
+ * @param lateness Current lateness of the vehicle, used to determine whether a dispatch slot is missed.
+ * @param missed If not nullptr, this is set to the dispatch slot which the vehicle would have used if on time, but is expected to miss due to lateness (if any).
+ *               This is only written when a scheduled dispatch order is evaluated.
+ * @return Whether a scheduled dispatch slot was selected, and vehicle lateness should be clear from this point onward.
+ */
 static bool VehicleSetNextDepartureTime(Ticks *previous_departure, Ticks *waiting_time, const StateTicks state_ticks_base,
-		const Vehicle *v, const Order *order, bool arrived_at_timing_point, ScheduledDispatchCache &dept_schedule_last, ScheduledDispatchVehicleRecords &records)
+		const Vehicle *v, const Order *order, bool arrived_at_timing_point, ScheduledDispatchCache &dept_schedule_last, ScheduledDispatchVehicleRecords &records,
+		Ticks lateness, MissedDispatchSlot *missed)
 {
 	if (v->vehicle_flags.Test(VehicleFlag::ScheduledDispatch)) {
 		/* This condition means that we want departure time for the dispatch order */
@@ -249,55 +276,72 @@ static bool VehicleSetNextDepartureTime(Ticks *previous_departure, Ticks *waitin
 		if (VehicleOrderRequiresScheduledDispatch(v, order, arrived_at_timing_point)) {
 			const DispatchSchedule &ds = v->orders->GetDispatchScheduleByIndex(order->GetDispatchScheduleIndex());
 
-			StateTicks actual_departure         = STATE_TICKS_INT_MAX;
-			int actual_slot_index               = -1;
 			const StateTicks begin_time         = ds.GetScheduledDispatchStartTick();
 			const uint32_t dispatch_duration    = ds.GetScheduledDispatchDuration();
 			const int32_t max_delay             = ds.GetScheduledDispatchDelay();
 
 			/* Earliest possible departure according to the schedule */
-			StateTicks earliest_departure = begin_time;
+			StateTicks schedule_earliest_departure = begin_time;
 			if (ds.GetScheduledDispatchLastDispatch() != INVALID_SCHEDULED_DISPATCH_OFFSET) {
-				earliest_departure += ds.GetScheduledDispatchLastDispatch();
+				schedule_earliest_departure += ds.GetScheduledDispatchLastDispatch();
 			} else {
-				earliest_departure--;
+				schedule_earliest_departure--;
 			}
+
+			/* Earliest possible departure according to the schedule and the vehicle ready time */
+			auto get_earliest_departure = [&](StateTicks ready_to_depart_time) -> StateTicks {
+				if (schedule_earliest_departure + max_delay < ready_to_depart_time) {
+					/* -1 because this number is actually a moment before actual departure */
+					return ready_to_depart_time - max_delay - 1;
+				}
+				return schedule_earliest_departure;
+			};
 
 			/* Earliest possible departure according to vehicle current timetable */
 			const StateTicks ready_to_depart_time = state_ticks_base + *previous_departure + order->GetTravelTime() + order->GetTimetabledWait();
-			if (earliest_departure + max_delay < ready_to_depart_time) {
-				earliest_departure = ready_to_depart_time - max_delay - 1;
-				/* -1 because this number is actually a moment before actual departure */
-			}
+			const StateTicks earliest_departure = get_earliest_departure(ready_to_depart_time);
 
-			btree::btree_set<StateTicks> &slot_cache = dept_schedule_last[&ds];
+			ScheduledDispatchCacheEntry &slot_cache = dept_schedule_last[&ds];
 
 			/* Find next available slots */
-			int slot_idx = 0;
-			for (const DispatchSlot &slot : ds.GetScheduledDispatch()) {
-				int this_slot = slot_idx++;
+			auto find_slot = [&](StateTicks after, bool skip_missed) -> std::pair<StateTicks, int> {
+				StateTicks actual_departure = STATE_TICKS_INT_MAX;
+				int actual_slot_index = -1;
 
-				if (slot.offset >= dispatch_duration) continue;
+				int slot_idx = 0;
+				for (const DispatchSlot &slot : ds.GetScheduledDispatch()) {
+					int this_slot = slot_idx++;
 
-				StateTicks current_departure = begin_time + slot.offset;
-				while (current_departure <= earliest_departure) {
-					current_departure += dispatch_duration;
-				}
+					if (slot.offset >= dispatch_duration) continue;
 
-				/* Make sure the slots has not already been used previously in this departure board calculation */
-				while (slot_cache.count(current_departure) > 0) {
-					if (HasBit(slot.flags, DispatchSlot::SDSF_REUSE_SLOT)) {
-						/* Allow re-use of this slot if it's the last seen */
-						if (*slot_cache.rbegin() == current_departure) break;
+					StateTicks current_departure = begin_time + slot.offset;
+					while (current_departure <= after) {
+						current_departure += dispatch_duration;
 					}
-					current_departure += dispatch_duration;
+
+					while (true) {
+						/* Make sure the slots has not already been used previously in this departure board calculation */
+						if (slot_cache.used.count(current_departure) > 0) {
+							/* Allow re-use of this slot if it's the last seen */
+							if (HasBit(slot.flags, DispatchSlot::SDSF_REUSE_SLOT) && *slot_cache.used.rbegin() == current_departure) break;
+						} else if (!skip_missed || slot_cache.missed.count(current_departure) == 0) {
+							break;
+						}
+						current_departure += dispatch_duration;
+					}
+
+					if (actual_departure > current_departure) {
+						actual_departure = current_departure;
+						actual_slot_index = this_slot;
+					}
 				}
 
-				if (actual_departure > current_departure) {
-					actual_departure = current_departure;
-					actual_slot_index = this_slot;
-				}
-			}
+				return { actual_departure, actual_slot_index };
+			};
+
+			const auto [actual_departure, actual_slot_index] = find_slot(earliest_departure, false);
+
+			if (missed != nullptr) *missed = {};
 
 			if (actual_departure == STATE_TICKS_INT_MAX) {
 				/* Failed to find a dispatch slot for this departure at all, the schedule is invalid/empty.
@@ -307,10 +351,27 @@ static bool VehicleSetNextDepartureTime(Ticks *previous_departure, Ticks *waitin
 				return false;
 			}
 
+			if (missed != nullptr && lateness > 0) {
+				/* Check whether the vehicle would have used an earlier slot if it were on time, which it now misses due to lateness. */
+				const StateTicks on_time_earliest_departure = get_earliest_departure(ready_to_depart_time - lateness);
+				if (on_time_earliest_departure < earliest_departure) {
+					const auto [on_time_departure, on_time_slot_index] = find_slot(on_time_earliest_departure, true);
+					if (on_time_departure < actual_departure) {
+						missed->ds = &ds;
+						missed->slot = on_time_departure;
+						missed->shift = on_time_departure - actual_departure;
+						missed->slot_index = on_time_slot_index;
+						if (!ds.GetScheduledDispatchReuseSlots()) {
+							slot_cache.missed.insert(on_time_departure);
+						}
+					}
+				}
+			}
+
 			*waiting_time = (actual_departure - state_ticks_base).AsTicks() - *previous_departure - order->GetTravelTime();
 			*previous_departure = (actual_departure - state_ticks_base).AsTicks();
 			if (!ds.GetScheduledDispatchReuseSlots()) {
-				slot_cache.insert(actual_departure);
+				slot_cache.used.insert(actual_departure);
 			}
 
 			extern LastDispatchRecord MakeLastDispatchRecord(const DispatchSchedule &ds, StateTicks slot, int slot_index);
@@ -394,7 +455,7 @@ static void ScheduledDispatchSmartTerminusDetection(DepartureList &departure_lis
 
 	for (auto iter = departure_list.rbegin(); iter != departure_list.rend(); ++iter) {
 		Departure *d = iter->get();
-		if (d->show_as != DSA_NORMAL) continue;
+		if (d->show_as != DSA_NORMAL || d->status == D_CANCELLED) continue;
 
 		check_departure(d);
 	}
@@ -408,7 +469,7 @@ static void ScheduledDispatchSmartTerminusDetection(DepartureList &departure_lis
 
 		for (auto iter = departure_list.rbegin(); iter != departure_list.rend(); ++iter) {
 			Departure *d = iter->get();
-			if (d->show_as != DSA_NORMAL) continue;
+			if (d->show_as != DSA_NORMAL || d->status == D_CANCELLED) continue;
 
 			check_departure(d);
 		}
@@ -547,6 +608,7 @@ static ProcessLiveDepartureCandidateVehicleResult ProcessLiveDepartureCandidateV
 	DepartureStatus status = candidate.status;
 	Ticks start_ticks = candidate.tick;
 	Ticks current_lateness = candidate.current_lateness;
+	MissedDispatchSlot missed_dispatch{};
 
 	const StateTicks state_ticks_base = _state_ticks;
 
@@ -574,7 +636,8 @@ static ProcessLiveDepartureCandidateVehicleResult ProcessLiveDepartureCandidateV
 			start_ticks += order->GetTravelTime() + order->GetWaitTime();
 			waiting_time = -current_lateness + order->GetWaitTime();
 			current_lateness = std::max<Ticks>(0, -waiting_time);
-		} else if (VehicleSetNextDepartureTime(&start_ticks, &waiting_time, state_ticks_base, v, order, status == D_ARRIVED, schdispatch_last_planned_dispatch, candidate.dispatch_records)) {
+		} else if (VehicleSetNextDepartureTime(&start_ticks, &waiting_time, state_ticks_base, v, order, status == D_ARRIVED, schdispatch_last_planned_dispatch, candidate.dispatch_records,
+				current_lateness, (status != D_CANCELLED && _settings_client.gui.departure_show_missed_dispatch_cancelled) ? &missed_dispatch : nullptr)) {
 			if (waiting_time != Departure::INVALID_WAIT_TICKS) {
 				Ticks arrival_tick = start_ticks - waiting_time;
 				Ticks timetable_arrival_tick = arrival_tick - current_lateness;
@@ -663,6 +726,7 @@ static ProcessLiveDepartureCandidateVehicleResult ProcessLiveDepartureCandidateV
 			od.dispatch_records = std::move(candidate.dispatch_records);
 			od.arrivals_complete = false;
 			od.arrival_history = std::move(candidate.arrival_history);
+			od.missed_dispatch = missed_dispatch;
 
 			/* If we are early, use the scheduled date as the expected date. We also take lateness to be zero. */
 			if (current_lateness < 0 && status != D_ARRIVED) {
@@ -924,7 +988,8 @@ static void AdvanceLiveDepartureOrderToNextCandidate(LiveQueueItem queue_item, O
 
 		check_first_order = true;
 
-		if (VehicleSetNextDepartureTime(&lod.expected_tick, &lod.scheduled_waiting_time, state_ticks_base, lod.v, order, false, schdispatch_last_planned_dispatch, lod.dispatch_records)) {
+		if (VehicleSetNextDepartureTime(&lod.expected_tick, &lod.scheduled_waiting_time, state_ticks_base, lod.v, order, false, schdispatch_last_planned_dispatch, lod.dispatch_records,
+				lod.lateness, (lod.status != D_CANCELLED && _settings_client.gui.departure_show_missed_dispatch_cancelled) ? &lod.missed_dispatch : nullptr)) {
 			HandleScheduledWaitLateness(lod);
 		}
 
@@ -1069,6 +1134,48 @@ static DepartureList MakeDepartureListLiveMode(DepartureOrderDestinationDetector
 	std::make_heap(candidate_queue.begin(), candidate_queue.end());
 
 	/* candidate_queue is now a queue/heap */
+
+	/* Departures shown as cancelled because the vehicle is expected to miss a dispatch slot due to lateness, along with the missed slot. */
+	std::vector<std::pair<const Departure *, MissedDispatchSlot>> missed_dispatch_departures;
+
+	/* Add a departure to the result list, returns false if it was merged with an identical existing departure. */
+	auto add_departure = [&](std::unique_ptr<Departure> &&departure) -> bool {
+		if (_settings_client.gui.departure_merge_identical) {
+			for (const std::unique_ptr<Departure> &existing : result) {
+				if (*departure == *existing) return false;
+			}
+		}
+		result.push_back(std::move(departure));
+		return true;
+	};
+
+	/* If the vehicle is expected to miss a dispatch slot which it would have used if on time, add a cancelled copy of the departure for the missed slot. */
+	auto add_missed_dispatch_departure = [&](const OrderDate &lod, const Departure &d) {
+		const MissedDispatchSlot &missed = lod.missed_dispatch;
+		if (!missed.IsValid() || lod.status == D_CANCELLED) return;
+
+		/* An arrival at the dispatch order itself occurs before the missed dispatch. */
+		if (d.type == D_ARRIVAL && lod.order->IsScheduledDispatchOrder(true)) return;
+
+		/* Only show the missed departure for a short time after its scheduled time. */
+		if (d.scheduled_tick + missed.shift + MISSED_DISPATCH_VISIBLE_TICKS < _state_ticks) return;
+
+		std::unique_ptr<Departure> missed_departure = std::make_unique<Departure>(d);
+		missed_departure->ShiftTimes(missed.shift);
+		missed_departure->lateness = 0;
+		missed_departure->status = D_CANCELLED;
+		if (calling_settings.DispatchScheduleRouteIDEnabled()) {
+			const DispatchSlot &slot = missed.ds->GetScheduledDispatch()[missed.slot_index];
+			if (slot.route_id != 0) {
+				missed_departure->schedule_route_id = missed.ds->GetSupplementaryName(DispatchSchedule::SupplementaryNameType::RouteID, slot.route_id);
+			} else {
+				missed_departure->schedule_route_id.clear();
+			}
+		}
+
+		const Departure *ptr = missed_departure.get();
+		if (add_departure(std::move(missed_departure))) missed_dispatch_departures.emplace_back(ptr, missed);
+	};
 
 	/* We now find as many departures as we can. It's a little involved so I'll try to explain each major step. */
 	/* The countdown from 10000 is a safeguard just in case something nasty happens. 10000 seemed large enough. */
@@ -1234,20 +1341,8 @@ static DepartureList MakeDepartureListLiveMode(DepartureOrderDestinationDetector
 
 			if (via_state.found_terminus) {
 				/* Add the departure to the result list. */
-				bool duplicate = false;
-
-				if (_settings_client.gui.departure_merge_identical) {
-					for (uint i = 0; i < result.size(); ++i) {
-						if (*d == *(result[i])) {
-							duplicate = true;
-							break;
-						}
-					}
-				}
-
-				if (!duplicate) {
-					result.push_back(std::move(departure_ptr));
-				}
+				add_missed_dispatch_departure(lod, *d);
+				add_departure(std::move(departure_ptr));
 			}
 		} else {
 			/* Computing arrivals: */
@@ -1331,20 +1426,8 @@ static DepartureList MakeDepartureListLiveMode(DepartureOrderDestinationDetector
 			}
 
 			if (ProcessArrivalHistory(d, lod.arrival_history, lod.expected_tick - d->EffectiveWaitingTime(), source, calling_settings)) {
-				bool duplicate = false;
-
-				if (_settings_client.gui.departure_merge_identical) {
-					for (uint i = 0; i < result.size(); ++i) {
-						if (*d == *(result[i])) {
-							duplicate = true;
-							break;
-						}
-					}
-				}
-
-				if (!duplicate) {
-					result.push_back(std::move(departure_ptr));
-				}
+				add_missed_dispatch_departure(lod, *d);
+				add_departure(std::move(departure_ptr));
 			}
 
 			/* A new arrival history following on from this will be filled in below */
@@ -1363,8 +1446,24 @@ static DepartureList MakeDepartureListLiveMode(DepartureOrderDestinationDetector
 				type, source, calling_settings, max_ticks, schdispatch_last_planned_dispatch, true);
 	}
 
-	if (type == D_DEPARTURE) {
+	if (!missed_dispatch_departures.empty()) {
+		/* Remove missed departures for slots which were later predicted to be used by another vehicle after all. */
+		btree::btree_set<const Departure *> to_remove;
+		for (const auto &[departure, missed] : missed_dispatch_departures) {
+			auto iter = schdispatch_last_planned_dispatch.find(missed.ds);
+			if (iter != schdispatch_last_planned_dispatch.end() && iter->second.used.count(missed.slot) > 0) to_remove.insert(departure);
+		}
+		if (!to_remove.empty()) {
+			result.erase(std::remove_if(result.begin(), result.end(), [&](const std::unique_ptr<Departure> &d) { return to_remove.count(d.get()) > 0; }), result.end());
+		}
+	}
+
+	if (type == D_DEPARTURE || !missed_dispatch_departures.empty()) {
+		/* Missed departures are added out of order, so arrivals also need to be sorted if any were added. */
 		SortDepartures(result);
+	}
+
+	if (type == D_DEPARTURE) {
 		if (calling_settings.SmartTerminusEnabled()) {
 			ScheduledDispatchSmartTerminusDetection(result);
 		}
