@@ -194,14 +194,16 @@ struct TrainCoupling {
 
 ### 6.1 Beslissing bij het sein
 
-De normale reservering mislukt omdat het perron bezet is. Dan wordt in `ChooseTrainTrack` / `TryPathReserveWithResultFlags` gecontroleerd:
+Geïmplementeerd in fase 2. Zolang er nog geen ordervlaggen zijn (fase 3), wordt het koppeldoel gezet met het commando `SetTrainCouplingTarget` (console: `couple_approach`). Dat vult `Train::coupling_target` en de vlag `CouplingArrivingLeads`.
 
-1. Is de huidige order `Koppelen` voor dit station?
-2. Staat er een geschikte partner (§3.2) bereikbaar in een perron?
-3. Zo ja, dan plant YAPF met als bestemming het perron van de partner, in de nieuwe modus **"gedeeltelijke perronreservering"**:
-   - `ReserveRailStationPlatform` reserveert alleen de vrije perrontegels, tot de tegel vóór de partner;
-   - de tegel met de achterkant van de partner is al door die partner gereserveerd en telt als eindpunt.
-4. Zet `coupling_target` en `CouplingApproach`. Markeer het ingangssein als **"aankoppelen toegestaan"** (§6.2).
+- **Geldig doel** (`GetCouplingApproachTarget`): het doel staat stil en volledig in een perron. Het is van dezelfde eigenaar, niet gekoppeld, en de oprijdende trein heeft een order naar dat station.
+- **YAPF:**
+  - Alleen het perron van het doel geldt als bestemming.
+  - De eerste perrontegel op dat perron telt als "veilige" eindpositie.
+  - De controle "eindpositie moet vrij zijn" wordt daar overgeslagen.
+- **Gedeeltelijke perronreservering:** YAPF reserveert een perron normaal vanaf het verre einde, achteruit. Bij koppelen wordt alleen het stuk van de perroningang tot de eerste tegel waarop het doel staat gereserveerd. Bij het terugdraaien worden de tegels van het doel overgeslagen. Daarbij wordt `Train::coupling_dir` (de rijrichting het perron in) vastgelegd.
+- **`ExtendTrainReservation`:** stopt normaal bij een bezette perroningang. Voor het koppelperron laat het de pathfinder het overnemen.
+- **Toestemming pas bij lage snelheid:** de koppelreservering wordt alleen toegekend als de trein ten hoogste `train_coupling_speed` rijdt. Een snellere trein ziet het sein als rood en remt af. Zodra hij langzaam genoeg is, krijgt hij toestemming. Dit werkt met beide remmodellen.
 
 ### 6.2 Seinbeeld
 
@@ -214,7 +216,7 @@ Dit volgt de wens van de opdrachtgever. Per sein is één extra bit nodig: **"aa
 
 | Situatie | Wat het sein toont | Hoe |
 |---|---|---|
-| Seinstijl met `COMBINED_NORMAL_SHUNT` (realistisch remmen) | **Rangeerbeeld** | In `DetermineCombineNormalShuntModeWithLookahead`: als de reservering eindigt in een koppelreservering, roep `SetCombinedNormalShuntModeSignalToShunt` aan en zet `TRSLAI_COMBINED_SHUNT`. Dit hergebruikt alles wat er al is. |
+| Seinstijl met `COMBINED_NORMAL_SHUNT` (realistisch remmen) | **Rangeerbeeld** | **Geïmplementeerd in fase 2:** in `DetermineCombineNormalShuntModeWithLookahead` krijgt het laatste sein vóór het koppelperron het rangeerbeeld. Een routeringsbeperking die expliciet "normaal" afdwingt, gaat voor. Nog niet getest met een NewGRF die een rangeerbeeld heeft. |
 | NewGRF-sein dat de nieuwe functie ondersteunt | **Groen knipperend**, of een eigen beeld van de GRF | Nieuwe bit 25 in variabele 0x18 (`param2`): "aankoppelen toegestaan". De GRF schakelt dit in via een nieuwe feature- of control-vlag, net als bit 24 voor beperkte seinen. De GRF laat het sein knipperen met de bestaande animatieteller (globale variabele 0x0A). |
 | Ingebouwde seinen | **Groen knipperend** | `DrawSingleSignal` wisselt op de tick-teller tussen het normale groene sprite en een groen sprite met een "lamp uit"-recolour. Die recolour komt als extra sprite in `tracerestrict.grf` of een kleine nieuwe basis-GRF. |
 | NewGRF-sein zonder ondersteuning voor bit 25 | **Geel ("Prepare to stop")** | Alleen bij het tekenen wordt aspect 2 aan de GRF doorgegeven, in plaats van de opgeslagen waarde. Het opgeslagen seinbeeld en de remberekening veranderen niet. Heeft de GRF geen extra aspecten (alleen rood en groen), dan wordt groen getoond. |
@@ -224,38 +226,41 @@ Dit volgt de wens van de opdrachtgever. Per sein is één extra bit nodig: **"aa
 
 ### 6.3 Snelheid
 
-Er komen twee nieuwe instellingen:
+Er zijn twee nieuwe instellingen, te vinden onder "Beperkingen":
 
 | Instelling | Standaard | Bereik | Geldt |
 |---|---|---|---|
-| `train_coupling_speed` | 40 km/u | 10–80 | vanaf het sein tot de laatste tegel |
+| `train_coupling_speed` | 40 km/u | 10–80 | vanaf de koppelreservering bij het sein tot de laatste tegel |
 | `train_coupling_final_speed` | 15 km/u | 5–30 | op de laatste tegel (de laatste 16 eenheden voor het koppelpunt) |
 
-Beide worden toegepast in `GetCurrentMaxSpeedInfoInternal`, zolang `CouplingApproach` actief is.
+- **Strikte limiet:** beide snelheden zijn een harde limiet in `GetCurrentMaxSpeedInfoInternal`. De vlag `CouplingSpeedLimit` wordt gezet bij het passeren van het padsein.
+- **Realistisch remmen:** `ApplyCouplingLookAhead` zorgt dat de trein het perron met ten hoogste 40 km/u oprijdt, de laatste tegel met ten hoogste 15 km/u nadert, en precies op het koppelpunt stilstaat.
+- **Gemeten in de test:**
+  - Oorspronkelijk remmodel: de trein vertraagt voor het rode sein en passeert het met 37–40 km/u. Op het perron rijdt hij 40 km/u en op de laatste tegel 15 km/u.
+  - Realistisch remmen: de snelheid zakt geleidelijk van 70 naar 40 km/u vóór het sein. Op de laatste tegel loopt hij geleidelijk terug van 40 naar 15 km/u.
 
 ### 6.4 Stoppen op het koppelpunt
 
-- **Koppelpunt:** de positie van de achterkant van de partner, gemeten vanaf de perroningang in 1/16 tegel.
-- `GetTrainStopLocation` en `PredictStationStoppingLocation` gebruiken `min(normaal stoppunt, koppelpunt)`.
-- **Realistisch remmen:** `reservation_end_position` wordt het koppelpunt. Een extra lookahead-snelheidsbeperking zorgt dat de trein op de grens van de laatste tegel ten hoogste 15 km/u rijdt. De bestaande remcurve brengt hem precies op het koppelpunt tot stilstand.
-- In `VehicleEnter_Station`: bereikt de trein het koppelpunt (afstand 0, met een marge van 1 eenheid), dan volgt `CoupleTrains`. De bestaande controle op doorschieten wordt in dit geval overgeslagen.
+- **Koppelpunt** (`GetCouplingStopLocation`): de plaats waar het midden van het voorste voertuig moet staan, zodat het precies als volgend voertuig in een keten achter het dichtstbijzijnde uiteinde van het doel staat. Het wordt gemeten vanaf het begin van het perron, net als bij `GetTrainStopLocation`.
+- `GetTrainStopLocation` gebruikt `min(normaal stoppunt, koppelpunt)`.
+- **Bij het stoppen** (`TrainEnterStation`) wordt de trein aangemeld voor koppelen. Het koppelen zelf gebeurt ná de tick van alle treinen (`ProcessPendingTrainCouplings`). Halverwege de bewegingslus van een trein de keten aanpassen is namelijk onveilig.
+- **Kop tegen kop of staart tegen staart:** de aankomende trein wordt eerst omgedraaid (`FlipTrainForCoupling`), net zoals OpenTTD een trein omdraait. Dit is nog niet getest.
+- **Mislukt het koppelen,** dan wordt het koppeldoel gewist, zodat het doel niet eindeloos blijft wachten.
 
 ### 6.5 Nooit een crash
 
-- `CheckTrainCollision` (`train_cmd.cpp:5277`) krijgt een uitzondering voor het paar `coupling_target`, in beide richtingen. Dit is een vangnet: normaal stopt de trein op het koppelpunt.
-- Raakt de trein de partner toch terwijl `CouplingApproach` actief is, dan wordt er gekoppeld of gestopt. Er volgt **nooit** `TrainsCrashed`.
-- Een partner waar een trein met `coupling_target` op afrijdt, blijft **staan**. Ook als zijn wachttijd verloopt, mag hij pas vertrekken als de aanrijding afgebroken is.
+- `CheckTrainCollision` heeft een uitzondering voor het paar oprijdende trein en doel, in beide richtingen (`IsCouplingApproachCollision`).
+- Een trein waar een andere trein op afrijdt om te koppelen, blijft laden en vertrekt niet (`IsTrainBeingApproachedForCoupling` in `HandleLoading`).
 - Voor alle andere treinen gelden de normale botsregels.
 
 ### 6.6 Afbreken
 
-`coupling_target`, `CouplingApproach` en het seinbit worden gewist, en de reservering wordt vrijgegeven, in deze gevallen:
+- Het koppeldoel wordt gewist bij koppelen, bij mislukt koppelen, en als het doel verdwijnt.
+- Afbreken bij een orderwijziging, bij "force proceed", bij omkeren en bij een depotbezoek volgt in fase 3, samen met de ordervlaggen.
 
-- de order verandert;
-- de speler gebruikt "force proceed";
-- de trein keert om;
-- de partner verdwijnt;
-- de trein gaat naar een depot.
+### 6.7 Orderlijsten van passieve stellen
+
+Op een paar plekken doorloopt de code orderlijsten via "voorste voertuigen die eerste in hun gedeelde lijst zijn". Daar viel de lijst van een gekoppeld passief stel buiten. Het gaat om de referentietelling van orderbestemmingen en om het verwijderen van orders als een station of depot verdwijnt of infrastructuur-delen stopt. Deze plekken gebruiken nu `GetFrontAndCoupledPassiveVehicles`.
 
 ## 7. Laden, lossen, reizigers en opbrengst
 

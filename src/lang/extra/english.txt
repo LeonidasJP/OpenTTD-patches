@@ -184,6 +184,10 @@ STR_CONFIG_SETTING_TRACK_EDIT_IGNORE_REALISTIC_BRAKING_HELPTEXT :Allow track edi
 
 STR_CONFIG_SETTING_THROUGH_LOAD_SPEED_LIMIT                     :Train through load maximum speed: {STRING2}
 STR_CONFIG_SETTING_THROUGH_LOAD_SPEED_LIMIT_HELPTEXT            :The maximum permitted speed for trains when through loading at a station
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Train coupling maximum speed: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :The maximum permitted speed for trains which drive into an occupied platform to couple to another train, from the last signal before the platform
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Train coupling final approach maximum speed: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED_HELPTEXT          :The maximum permitted speed for trains on the last tile before coupling to another train
 
 STR_CONFIG_SETTING_RAIL_DEPOT_SPEED_LIMIT                       :Rail depot maximum speed: {STRING2}
 STR_CONFIG_SETTING_RAIL_DEPOT_SPEED_LIMIT_HELPTEXT              :The maximum permitted speed for trains when entering or exiting a rail depot
