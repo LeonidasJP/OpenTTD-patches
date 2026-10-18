@@ -3310,7 +3310,7 @@ void CheckOrders(const Vehicle *v)
 		if (n_st < 2 && message == INVALID_STRING_ID) message = STR_NEWS_VEHICLE_HAS_TOO_FEW_ORDERS;
 
 		if (message == INVALID_STRING_ID && v->type == VehicleType::Train) {
-			if (!IsCouplingOrderSequenceValid(v->orders, UINT_MAX, OrderCouplingMode::None)) {
+			if (!IsCouplingOrderSequenceValid(v->orders, UINT_MAX, OrderCouplingMode::None, false, true)) {
 				message = STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE;
 			} else {
 				for (const Order *order : v->Orders()) {
