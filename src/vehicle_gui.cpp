@@ -4238,6 +4238,10 @@ public:
 
 		if (v->vehstatus.Test(VehState::Crashed)) {
 			AppendStringInPlace(buffer, STR_VEHICLE_STATUS_CRASHED);
+		} else if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+			/* The passive train of a coupled combination follows the combination head. */
+			const Train *head = GetCouplingCombinationHead(Train::From(v));
+			if (head != nullptr) AppendStringInPlace(buffer, STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE, head->index);
 		} else if ((v->breakdown_ctr == 1 || (v->type == VehicleType::Train && Train::From(v)->flags.Any(VehicleRailFlagsIsBroken))) && !mouse_over_start_stop) {
 			const Vehicle *w = (v->type == VehicleType::Train) ? GetMostSeverelyBrokenEngine(Train::From(v)) : v;
 
@@ -4309,6 +4313,10 @@ public:
 				case OT_GOTO_STATION: {
 					show_order_number();
 					text_colour = TextColour::LightBlue;
+					if (v->type == VehicleType::Train && Train::From(v)->coupling_target != VehicleID::Invalid() && Train::GetIfValid(Train::From(v)->coupling_target) != nullptr) {
+						append(STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH, Train::From(v)->coupling_target, v->GetDisplaySpeed());
+						break;
+					}
 					append(v->vehicle_flags.Test(VehicleFlag::PathfinderLost) ? STR_VEHICLE_STATUS_CANNOT_REACH_STATION_VEL : STR_VEHICLE_STATUS_HEADING_FOR_STATION_VEL,
 							v->current_order.GetDestination().ToStationID(), PackVelocity(v->GetDisplaySpeed(), v->type));
 					break;
@@ -4339,7 +4347,14 @@ public:
 				}
 
 				case OT_LOADING:
-					append(STR_VEHICLE_STATUS_LOADING_UNLOADING);
+					if (v->type == VehicleType::Train && IsTrainCoupled(Train::From(v))) {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED, GetCoupledPassiveHead(Train::From(v))->index);
+					} else if (v->type == VehicleType::Train && GetCurrentCouplingOrder(Train::From(v)) != nullptr &&
+							GetCurrentCouplingOrder(Train::From(v))->GetCouplingMode() == OrderCouplingMode::Couple) {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING);
+					} else {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING);
+					}
 					break;
 
 				case OT_LOADING_ADVANCE:
