@@ -984,6 +984,34 @@ bool ShouldWarnCoupledDepotStop(const Vehicle *v, const Order *order)
 	return IsOrderListUsedByCombination(v);
 }
 
+/**
+ * Does a train have a coupling role, see OrderConditionVariable::CouplingRole?
+ * @param t The train.
+ * @param role The coupling role.
+ * @return True if the train has the role.
+ */
+bool HasTrainCouplingRole(const Train *t, OrderCouplingRole role)
+{
+	switch (role) {
+		case OrderCouplingRole::Coupled:        return IsTrainInCombination(t);
+		case OrderCouplingRole::Leading:        return IsTrainCoupled(t);
+		case OrderCouplingRole::SplitOffLast:   return t->flags.Test(VehicleRailFlag::SplitOffLast);
+		case OrderCouplingRole::CouplingFailed: return t->flags.Test(VehicleRailFlag::CouplingFailedLast);
+		default: return false;
+	}
+}
+
+/**
+ * A train leaves a station: remember whether it left a couple order without coupling.
+ * @param t The train.
+ */
+void OnTrainLeavingCouplingStation(Train *t)
+{
+	const Order *order = GetCurrentCouplingOrder(t);
+	if (order == nullptr || order->GetCouplingMode() != OrderCouplingMode::Couple) return;
+	t->flags.Set(VehicleRailFlag::CouplingFailedLast, !IsTrainInCombination(t));
+}
+
 /** Trains which reached their coupling stop location during the current tick. */
 static std::vector<VehicleID> _pending_train_couplings;
 

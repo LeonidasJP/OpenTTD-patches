@@ -262,7 +262,19 @@ enum class OrderConditionVariable : uint8_t {
 	CargoWaitingAmountPercentage = 20, ///< Skip based on the amount of a specific cargo waiting at station, relative to the vehicle capacity
 	VehicleInSlotGroup           = 21, ///< Test if vehicle is in slot group
 	DrivingBackwards             = 22, ///< Skip when the train is driving backwards, upstream value = 8
+	CouplingRole                 = 23, ///< Skip based on the coupling role of the train, see OrderCouplingRole.
 	End, ///< End marker.
+};
+
+/**
+ * Coupling roles tested by OrderConditionVariable::CouplingRole, stored in the condition value.
+ */
+enum class OrderCouplingRole : uint8_t {
+	Coupled        = 0, ///< The train is part of a coupled combination.
+	Leading        = 1, ///< The train leads a coupled combination.
+	SplitOffLast   = 2, ///< The train was split off (the passive train) at its last split.
+	CouplingFailed = 3, ///< The train left its last couple order without coupling.
+	End,                ///< End marker.
 };
 
 inline bool ConditionVariableHasStationID(OrderConditionVariable ocv)

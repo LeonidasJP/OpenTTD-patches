@@ -53,6 +53,7 @@ enum class VehicleRailFlag : uint8_t {
 	CouplingSpeedLimit        = 26, ///< This train passed the last signal before coupling, the coupling speed limit applies.
 	CouplingFromOrders        = 27, ///< Train::coupling_target was set by a couple order (and not by a command).
 	SplitOffLast              = 28, ///< This train was the passive train at its last split, see OrderConditionVariable::CouplingRole.
+	CouplingFailedLast        = 29, ///< This train left its last couple order without coupling, see OrderConditionVariable::CouplingRole.
 };
 using VehicleRailFlags = EnumBitSet<VehicleRailFlag, uint32_t>;
 
