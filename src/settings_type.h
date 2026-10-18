@@ -872,6 +872,8 @@ struct VehicleSettings {
 	bool                   roadveh_cant_quantum_tunnel;           ///< enable or disable vehicles quantum tunnelling through other vehicles when blocked
 	bool                   drive_through_train_depot;             ///< enable drive-through train depot emulation
 	uint16_t               through_load_speed_limit;              ///< maximum speed for through load
+	uint16_t               train_coupling_speed;                  ///< maximum speed for trains driving into a platform to couple, after passing the last signal
+	uint16_t               train_coupling_final_speed;            ///< maximum speed for trains on the last tile before coupling
 	uint16_t               rail_depot_speed_limit;                ///< maximum speed entering/existing rail depots
 	bool                   non_leading_engines_keep_name;         ///< allow engines moved to a non-leading position to retain their custom name
 };

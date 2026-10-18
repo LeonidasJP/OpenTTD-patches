@@ -43,6 +43,7 @@
 #include "schdispatch.h"
 #include "timetable_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "train.h"
 
 #include "table/strings.h"
@@ -84,7 +85,7 @@ static CommandCost CmdInsertOrderIntl(DoCommandFlags flags, Vehicle *v, VehicleO
 void IntialiseOrderDestinationRefcountMap()
 {
 	ClearOrderDestinationRefcountMap();
-	for (const Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (const Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		if (v != v->FirstShared()) continue;
 		for (const Order *order : v->Orders()) {
 			if (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT) || order->IsType(OT_IMPLICIT)) {
@@ -3264,7 +3265,7 @@ void StopRemoveOrderFromAllVehiclesBatch()
 	_remove_order_from_all_vehicles_batch = false;
 
 	/* Go through all vehicles */
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		if (v->type == VehicleType::Aircraft) continue;
 
 		Order *order = &v->current_order;
@@ -3314,7 +3315,7 @@ void RemoveOrderFromAllVehicles(OrderType type, DestinationID destination, bool 
 	 */
 
 	/* Go through all vehicles */
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		Order *order = &v->current_order;
 		if ((v->type == VehicleType::Aircraft && order->IsType(OT_GOTO_DEPOT) && !hangar ? OT_GOTO_STATION : order->GetType()) == type &&
 				(!hangar || v->type == VehicleType::Aircraft) && order->GetDestination() == destination) {
