@@ -2825,6 +2825,13 @@ void VehicleEnterDepot(Vehicle *v)
 			/* Clear unbunching data. */
 			v->ResetDepotUnbunching();
 
+			/* Announce that a coupled combination stopped in a depot, which was not allowed by the order. */
+			if (v->owner == _local_company && v->type == VehicleType::Train && IsTrainCoupled(Train::From(v)) &&
+					v->current_order.GetDepotOrderType().Test(OrderDepotTypeFlag::PartOfOrders) &&
+					!v->current_order.GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) {
+				AddVehicleAdviceNewsItem(AdviceType::VehicleWaiting, GetEncodedString(STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT, v->index), v->index);
+			}
+
 			/* Announce that the vehicle is waiting to players and AIs. */
 			if (v->owner == _local_company) {
 				AddVehicleAdviceNewsItem(AdviceType::VehicleWaiting, GetEncodedString(STR_NEWS_TRAIN_IS_WAITING + to_underlying(v->type), v->index), v->index);
