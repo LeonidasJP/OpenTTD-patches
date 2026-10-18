@@ -60,8 +60,9 @@ TrackBits GetReservedTrackbits(TileIndex t)
  * @param start starting tile of the platform
  * @param dir the direction in which to follow the platform
  * @param b the state the reservation should be set to
+ * @param clearing_train When clearing, the train which clears the reservation, its own vehicles do not keep tiles reserved.
  */
-void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool b)
+void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool b, const Train *clearing_train)
 {
 	TileIndex     tile = start;
 	TileIndexDiff diff = TileOffsByDiagDir(dir);
@@ -70,8 +71,13 @@ void SetRailStationPlatformReservation(TileIndex start, DiagDirection dir, bool 
 	assert_tile(GetRailStationAxis(start) == DiagDirToAxis(dir), start);
 
 	do {
-		SetRailStationReservation(tile, b);
-		MarkTileDirtyByTile(tile, VMDF_NOT_MAP_MODE);
+		/* Tiles with a train on them stay reserved; after splitting or coupling, another train may share the platform. */
+		if (b || !HasVehicleOnTile<VehicleType::Train>(tile, [clearing_train](const Train *u) {
+					return !u->vehstatus.Test(VehState::Crashed) && (clearing_train == nullptr || u->First() != clearing_train->First());
+				})) {
+			SetRailStationReservation(tile, b);
+			MarkTileDirtyByTile(tile, VMDF_NOT_MAP_MODE);
+		}
 		tile = TileAdd(tile, diff);
 	} while (IsCompatibleTrainStationTile(tile, start));
 }

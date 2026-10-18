@@ -403,6 +403,32 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 }
 
 /**
+ * Let a train which was split off depart from the station it is standing in, in the same way as after loading.
+ * The departure handles the orders, reversing and the path reservation.
+ * @param t The train.
+ */
+static void PrepareDepartureAfterSplit(Train *t)
+{
+	t->cur_speed = 0;
+	t->subspeed = 0;
+	t->wait_counter = 0;
+	t->force_proceed = TFP_NONE;
+	t->flags.Reset({VehicleRailFlag::Stuck, VehicleRailFlag::Reversing});
+	t->lookahead.reset();
+
+	const Train *moving_front = t->GetMovingFront();
+	if (IsRailStationTile(moving_front->tile)) {
+		const StationID station = GetStationIndex(moving_front->tile);
+		t->last_station_visited = station;
+		t->current_order.MakeLeaveStation();
+		t->current_order.SetDestination(station);
+		t->flags.Set(VehicleRailFlag::LeavingStation);
+	} else {
+		t->current_order.Free();
+	}
+}
+
+/**
  * Check whether a combination can be split.
  * @param head The head of the combination.
  * @return Error or success.
@@ -464,9 +490,13 @@ Train *SplitCombination(Train *head)
 
 	/* The passive train is a primary vehicle again, it continues in the same running state as the combination. */
 	GroupStatistics::CountVehicle(passive, 1);
-	passive->current_order.Free();
 	Train *leader = (passive == head) ? second : head;
 	passive->vehstatus.Set(VehState::Stopped, leader->vehstatus.Test(VehState::Stopped));
+	PrepareDepartureAfterSplit(passive);
+
+	/* Neither train may drive into the other until they have moved apart. */
+	head->split_partner = second->index;
+	second->split_partner = head->index;
 
 	InvalidateVehicleTickCaches();
 
@@ -494,6 +524,7 @@ void OnTrainCouplingVehicleDeleted(Train *v)
 	if (v->IsFrontEngine()) {
 		for (Train *t : Train::IterateFrontOnly()) {
 			if (t->coupling_target == v->index) ClearCouplingApproach(t);
+			if (t->split_partner == v->index) t->split_partner = VehicleID::Invalid();
 		}
 	}
 	if (v->flags.Test(VehicleRailFlag::CoupledCombination)) {
@@ -768,6 +799,70 @@ bool IsCouplingApproachCollision(const Train *a, const Train *b)
 }
 
 /**
+ * Get the distance from the moving front of a train to the nearest end of its split partner, if the partner is directly ahead on the same line.
+ * @param v The train.
+ * @return The distance between the centres of the vehicles, or std::nullopt if the partner is not directly ahead.
+ */
+static std::optional<int> GetSplitPartnerDistanceAhead(const Train *v)
+{
+	const Train *partner = Train::GetIfValid(v->split_partner);
+	if (partner == nullptr || !partner->IsFrontEngine() || partner == v) return std::nullopt;
+
+	const Train *moving_front = v->GetMovingFront();
+	const Direction direction = moving_front->GetMovingDirection();
+	if (!IsDiagonalDirection(direction)) return std::nullopt;
+	const DiagDirection dir = DirToDiagDir(direction);
+	const int front_position = GetCoordinateAlongDirection(moving_front->x_pos, moving_front->y_pos, dir);
+
+	std::optional<int> result;
+	for (const Train *end : { partner, partner->Last() }) {
+		/* The partner must be on the same line. */
+		if (DiagDirToAxis(dir) == Axis::X ? end->y_pos != moving_front->y_pos : end->x_pos != moving_front->x_pos) continue;
+		if (end->z_pos != moving_front->z_pos) continue;
+		const int distance = GetCoordinateAlongDirection(end->x_pos, end->y_pos, dir) - front_position;
+		if (distance > 0 && (!result.has_value() || distance < *result)) result = distance;
+	}
+	return result;
+}
+
+/**
+ * Is a train blocked by the train from which it was just split, because that train is directly ahead of it?
+ * @param v The train.
+ * @return True if the train may not move.
+ */
+bool IsTrainBlockedBySplitPartner(const Train *v)
+{
+	if (v->split_partner == VehicleID::Invalid()) return false;
+	std::optional<int> distance = GetSplitPartnerDistanceAhead(v);
+	if (!distance.has_value()) return false;
+
+	/* Blocked while the partner is (nearly) touching. */
+	return *distance <= 2 * (int)TILE_SIZE;
+}
+
+/**
+ * Stop guarding against the split partner once the trains have moved apart.
+ * @param v The train.
+ */
+void UpdateSplitPartner(Train *v)
+{
+	if (v->split_partner == VehicleID::Invalid()) return;
+	const Train *partner = Train::GetIfValid(v->split_partner);
+	if (partner == nullptr || !partner->IsFrontEngine()) {
+		v->split_partner = VehicleID::Invalid();
+		return;
+	}
+
+	/* Keep guarding while any vehicles of both trains are still on the same tile or adjacent tiles. */
+	for (const Train *u = v; u != nullptr; u = u->Next()) {
+		for (const Train *w = partner; w != nullptr; w = w->Next()) {
+			if (DistanceManhattan(u->tile, w->tile) <= 1) return;
+		}
+	}
+	v->split_partner = VehicleID::Invalid();
+}
+
+/**
  * Set or clear the train to which a train should drive to couple.
  * @param flags Type of operation.
  * @param veh_id The approaching train.
@@ -849,7 +944,6 @@ CommandCost CmdCutTrain(DoCommandFlags flags, VehicleID veh_id)
 		v->unitnumber = Company::Get(v->owner)->freeunits[v->type].UseID(GetFreeUnitNumber(VehicleType::Train));
 		v->CopyConsistPropertiesFrom(head);
 		v->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
-		v->current_order.Free();
 		v->vehstatus.Set(VehState::Stopped, head->vehstatus.Test(VehState::Stopped));
 		v->orders = head->orders;
 		v->AddToShared(head);
@@ -864,6 +958,9 @@ CommandCost CmdCutTrain(DoCommandFlags flags, VehicleID veh_id)
 		}
 		GroupStatistics::CountVehicle(v, 1);
 		InvalidateVehicleTickCaches();
+		PrepareDepartureAfterSplit(v);
+		head->split_partner = v->index;
+		v->split_partner = head->index;
 
 		head->ReserveTrackUnderConsist();
 		v->ReserveTrackUnderConsist();
