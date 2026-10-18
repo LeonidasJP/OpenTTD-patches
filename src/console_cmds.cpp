@@ -720,6 +720,9 @@ static bool ConDebugCoupling(std::span<std::string_view> argv)
 			v->flags.Test(VehicleRailFlag::Stuck), v->wait_counter, v->coupling_target, to_underlying(v->coupling_dir));
 	PBSTileInfo res = FollowTrainReservation(v);
 	IConsolePrint(CC_DEFAULT, "  reservation end {}x{} td {} okay {}", TileX(res.tile), TileY(res.tile), res.trackdir, res.okay);
+	IConsolePrint(CC_DEFAULT, "  roles: coupled {} leading {} split off last {} coupling failed {}",
+			HasTrainCouplingRole(v, OrderCouplingRole::Coupled), HasTrainCouplingRole(v, OrderCouplingRole::Leading),
+			HasTrainCouplingRole(v, OrderCouplingRole::SplitOffLast), HasTrainCouplingRole(v, OrderCouplingRole::CouplingFailed));
 
 	const Train *target = Train::GetIfValid(v->coupling_target);
 	if (target == nullptr) return true;
