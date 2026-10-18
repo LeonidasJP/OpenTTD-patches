@@ -343,7 +343,7 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
 ## 9. GUI
 
 - **Orderscherm:**
-  - instellen van `Koppelen` of `Splitsen`, het partnerfilter en de leider;
+  - instellen van `Koppelen` of `Splitsen`, het partnerfilter en de leider. *Gebouwd:* deze opties staan in de dropdown "Order beheren" van een stationsorder, onder de stoplocatie. Een groep kies je in een tweede dropdown; een orderlijst kies je door op een trein te klikken. De orderregel toont bijvoorbeeld "[koppelen: elke trein, aankomende trein leidt]" of "[splitsen]";
   - de depotvlag;
   - de gespiegelde orders, grijs weergegeven.
 - **Treinscherm:**
