@@ -732,10 +732,13 @@ static const TraceRestrictDropDownListSet *GetSortedCargoTypeDropDownListSet()
 	return &cargo_list;
 }
 
+DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &selected, bool include_default = true, int value_offset = 0);
+
 /**
  * Get a DropDownList of the group list
+ * @param value_offset Offset added to the group IDs for the values of the list items.
  */
-static DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &selected, bool include_default = true)
+DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &selected, bool include_default, int value_offset)
 {
 	std::vector<const Group *> list;
 	robin_hood::unordered_set<GroupID> seen_parents;
@@ -785,8 +788,8 @@ static DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &sel
 		});
 		for (auto it = start; it != list.end() && (*it)->parent == parent_filter; ++it) {
 			const Group *g = *it;
-			if (group_id == g->index) selected = group_id.base();
-			dlist.push_back(MakeDropDownListIndentStringItem(indent, GetString(STR_GROUP_NAME, g->index), g->index.base(), false));
+			if (group_id == g->index) selected = group_id.base() + value_offset;
+			dlist.push_back(MakeDropDownListIndentStringItem(indent, GetString(STR_GROUP_NAME, g->index), g->index.base() + value_offset, false));
 			if (seen_parents.count(g->index)) {
 				/* Output child groups */
 				output_groups(indent + 1, g->index);

@@ -1915,6 +1915,21 @@ STR_ORDER_RV_DIR_SE                                             :[south-east dir
 STR_ORDER_RV_DIR_SW                                             :[south-west direction]
 STR_ORDER_RV_DIR_NW                                             :[north-west direction]
 
+STR_ORDER_COUPLING_MODE_NONE                                    :No coupling or splitting
+STR_ORDER_COUPLING_MODE_COUPLE                                  :Couple trains here
+STR_ORDER_COUPLING_MODE_SPLIT                                   :Split train here
+STR_ORDER_COUPLING_LEADER_WAITING                               :Coupling: waiting train leads
+STR_ORDER_COUPLING_LEADER_ARRIVING                              :Coupling: arriving train leads
+STR_ORDER_COUPLING_FILTER_ANY                                   :Couple to: any train
+STR_ORDER_COUPLING_FILTER_GROUP                                 :Couple to: train in group...
+STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Couple to: train with orders of...
+STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[split]
+STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[couple: any train{STRING}]
+STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[couple: group {GROUP}{STRING}]
+STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[couple: orders of {VEHICLE}{STRING}]
+STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[couple: {PUSH_COLOUR}{RED}undefined{POP_COLOUR}{STRING}]
+STR_ORDER_COUPLING_ARRIVING_LEADS                               :, arriving train leads
+
 STR_ORDER_CONDITIONAL_UNDEFINED_STATION                         :{PUSH_COLOUR}{RED}undefined station{POP_COLOUR}
 
 STR_ORDER_CONDITIONAL_FREE_PLATFORMS_DISPLAY                    :Jump to order {COMMA} when {STRING1} {STRING} {COMMA} free platform{P "" s}
@@ -2569,6 +2584,8 @@ STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... trai
 STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... train is not coupled to another train
 STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... coupled trains can only be refitted or started/stopped
 STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... a split order is required before another couple order
+STR_ERROR_TRAIN_COUPLING_NO_GROUPS                              :{WHITE}... there are no train groups
+STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... select a train of your own with orders
 
 STR_WARNING_PASSWORD_SECURITY                                   :{YELLOW}Warning: Server administrators may be able to read any text entered here.
 STR_NETWORK_NEED_COMPANY_PASSWORD_CAPTION                       :{WHITE}Company is protected. Enter password
