@@ -36,7 +36,8 @@ void FindVehiclesWithOrder(VehiclePredicate veh_pred, OrderPredicate ord_pred, V
 
 			/* An order matches, we can add all shared vehicles to the list. */
 			for (; v != nullptr; v = v->NextShared()) {
-				veh_func(v);
+				/* The heads of passive trains in coupled combinations are not primary vehicles. */
+				if (v->IsPrimaryVehicle()) veh_func(v);
 			}
 			break;
 		}
