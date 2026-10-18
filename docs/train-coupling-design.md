@@ -114,13 +114,13 @@ Voorbeeld met één gedeelde orderlijst (A→B met twee stellen, B→C met één
 
 *Gebouwd:* de conditiewaarde kiest de rol: 0 = gekoppeld, 1 = leidt de combinatie, 2 = afgesplitst bij de laatste splitsing (vlag `SplitOffLast`), 3 = laatste koppeling mislukt. Die laatste vlag (`CouplingFailedLast`) wordt gezet als een trein een `Koppelen`-order verlaat zonder gekoppeld te zijn, en gewist als hij gekoppeld vertrekt. Alleen "is waar" en "is onwaar" zijn toegestaan.
 
-### 3.7 JSON-export van orders
-
-*Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`) en `coupling-filter-id`. Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
-
 ### 3.6 Depotorder (zie ook §8)
 
 Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toegestaan"**.
+
+### 3.7 JSON-export van orders
+
+*Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`) en `coupling-filter-id`. Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
 
 ## 4. Fysiek koppelen en splitsen
 
