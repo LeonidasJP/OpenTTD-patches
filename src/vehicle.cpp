@@ -1684,6 +1684,8 @@ void CallVehicleTicks()
 	}
 	RecordSyncEvent(NSRE_VEH_TRAIN);
 	ProcessPendingTrainCouplings();
+	extern void ProcessTrainLoadingConsoleWatches();
+	ProcessTrainLoadingConsoleWatches();
 	{
 		PerformanceMeasurer framerate(PerformanceElement::GameLoopRoadVehicles);
 		for (RoadVehicle *front : _tick_road_veh_front_cache) {

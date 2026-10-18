@@ -1957,7 +1957,7 @@ static DepartureList MakeDepartureListScheduleMode(DepartureOrderDestinationDete
 
 		const Vehicle *v = nullptr;
 		for (const Vehicle *u = veh->FirstShared(); u != nullptr; u = u->NextShared()) {
-			if (IsVehicleUsableForDepartures(u, calling_settings)) {
+			if (u->IsPrimaryVehicle() && IsVehicleUsableForDepartures(u, calling_settings)) {
 				v = u;
 				break;
 			}

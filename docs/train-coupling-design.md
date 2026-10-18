@@ -258,6 +258,21 @@ Er zijn twee nieuwe instellingen, te vinden onder "Beperkingen":
 - Het koppeldoel wordt gewist bij koppelen, bij mislukt koppelen, en als het doel verdwijnt.
 - Afbreken bij een orderwijziging, bij "force proceed", bij omkeren en bij een depotbezoek volgt in fase 3, samen met de ordervlaggen.
 
+### 6.8 Een perron gedeeld door twee treinen
+
+Bij koppelen (en direct na splitsen) staan twee treinen in hetzelfde perron. Op een aantal plekken ging OpenTTD ervan uit dat een perron altijd in zijn geheel door één trein is gereserveerd. Die plekken zijn aangepast:
+
+- **`FollowReservation`:** het volgen van een reservering stopt bij de eerste perrontegel waarop een andere trein staat of die niet gereserveerd is. Anders begon YAPF bij de andere trein.
+- **`IsWaitingPositionFree`:** de tegel ná een sein telt als vrij als daar het koppelperron begint. Dit speelt als het sein direct voor het perron staat.
+- **`IsSafeWaitingPosition`:** perrontegels van het koppelperron gelden als veilige eindpositie. Zo probeert de trein niet voorbij het koppelpunt verder te reserveren. Dezelfde regel geldt voor de long-reserve-logica.
+- **`SetRailStationPlatformReservation(false)`:** tegels waarop nog een andere trein staat, blijven gereserveerd.
+
+Daarnaast:
+
+- **Stoppunt:** bij koppelen geldt altijd het koppelpunt als stoppunt, ook als de order een andere stoplocatie heeft (bijvoorbeeld "dichtbij"). Bij realistisch remmen vervangt de koppelberekening de normale remberekening voor dat station.
+- **Na het splitsen:** het afgesplitste stel vertrekt via de normale vertrekprocedure. Zijn order schuift voorbij het splitsstation, en het mag niet in zijn partner rijden zolang die direct vóór hem staat. Dat wordt afgedwongen in de treinlogica, vóór elke beweging.
+- **Getest met de savegame van de opdrachtgever** (T-lay-out, treinstellen met cabines aan beide kanten, realistisch remmen): koppelen, splitsen, beide stellen hun eigen kant op, opnieuw koppelen bij terugkeer, en samen terug.
+
 ### 6.7 Orderlijsten van passieve stellen
 
 Op een paar plekken doorloopt de code orderlijsten via "voorste voertuigen die eerste in hun gedeelde lijst zijn". Daar viel de lijst van een gekoppeld passief stel buiten. Het gaat om de referentietelling van orderbestemmingen en om het verwijderen van orders als een station of depot verdwijnt of infrastructuur-delen stopt. Deze plekken gebruiken nu `GetFrontAndCoupledPassiveVehicles`.

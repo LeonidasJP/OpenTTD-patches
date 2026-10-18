@@ -17,6 +17,7 @@
 #include "newgrf_newsignals.h"
 #include "train_speed_adaptation.h"
 #include "bridge_signal_map.h"
+#include "train_coupling.h"
 
 #include "table/strings.h"
 
@@ -564,6 +565,39 @@ static PBSTileInfo FollowReservation(Owner o, RailTypes rts, TileIndex tile, Tra
 		/* One-way signal against us. The reservation can't be ours as it is not
 		 * a safe position from our direction and we can never pass the signal. */
 		if (!(flags & FRF_IGNORE_ONEWAY) && HasOnewaySignalBlockingTrackdir(ft.new_tile, new_trackdir)) break;
+
+		if (ft.is_station && v != nullptr) {
+			/* When coupling, a platform can be shared with another train: the reservation of that part of the platform is not ours. */
+			const TileIndexDiff diff = TileOffsByDiagDir(ft.exitdir);
+			TileIndex own_end = INVALID_TILE;
+			int own_tiles = 0;
+			bool other_train = false;
+			for (TileIndex t = ft.new_tile - (diff * ft.tiles_skipped);; t += diff) {
+				if (HasVehicleOnTile<VehicleType::Train>(t, [v](const Train *u) { return u->First() != v->First() && !u->vehstatus.Test(VehState::Crashed); })) {
+					other_train = true;
+					break;
+				}
+				if (!HasStationReservation(t)) {
+					/* Our reservation ends before this tile, any reservation after it belongs to another train. */
+					other_train = true;
+					break;
+				}
+				own_end = t;
+				own_tiles++;
+				if (t == ft.new_tile) break;
+			}
+			if (other_train) {
+				if (own_end != INVALID_TILE) {
+					if (lookahead != nullptr) {
+						lookahead->AddStation(own_tiles, GetStationIndex(ft.new_tile), z);
+						lookahead->reservation_end_position += own_tiles * TILE_SIZE;
+					}
+					tile = own_end;
+					trackdir = DiagDirToDiagTrackdir(ft.exitdir);
+				}
+				break;
+			}
+		}
 
 		tile = ft.new_tile;
 		trackdir = new_trackdir;
@@ -1524,6 +1558,9 @@ bool IsSafeWaitingPosition(const Train *v, TileIndex tile, Trackdir trackdir, bo
 {
 	if (IsRailDepotTile(tile)) return true;
 
+	/* The reservation into the platform of the train to couple to ends behind that train, where the train stops to couple. */
+	if (v->coupling_target != VehicleID::Invalid() && IsRailStationTile(tile) && IsCouplingApproachPlatformTile(v, tile)) return true;
+
 	/* For non-pbs signals, stop on the signal tile. */
 	if (HasBlockSignalOnTrackdir(tile, trackdir)) return true;
 
@@ -1671,6 +1708,9 @@ bool IsWaitingPositionFree(const Train *v, TileIndex tile, Trackdir trackdir, bo
 	CFollowTrackRail ft(v, v->GetIndirectCompatibleRailTypes());
 
 	if (!ft.Follow(tile, trackdir)) return true;
+
+	/* The platform of the train to couple to is partially reserved up to that train, see CYapfReserveTrack. */
+	if (ft.is_station && v->coupling_target != VehicleID::Invalid() && IsCouplingApproachPlatformTile(v, ft.new_tile)) return true;
 
 	/* Check for reachable tracks. */
 	ft.new_td_bits &= DiagdirReachesTrackdirs(ft.exitdir);
