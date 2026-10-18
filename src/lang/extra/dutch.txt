@@ -153,6 +153,10 @@ STR_ORDER_CONDITIONAL_COUPLING_ROLE_SPLIT_OFF_LAST              :Afgesplitst bij
 STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Laatste koppeling mislukt
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Waarschuwing: een gekoppelde trein gebruikt deze orders
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}De gekoppelde combinatie stopt in het depot. Zet "Gekoppelde combinatie mag in depot stoppen" aan om deze waarschuwing te voorkomen
+STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE                        :{LTBLUE}Gekoppeld aan {VEHICLE}
+STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH                      :{LTBLUE}Koppelen aan {VEHICLE}, {VELOCITY}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED                    :{LTBLUE}In- en uitladen, gekoppeld aan {VEHICLE}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING              :{LTBLUE}In- en uitladen, wacht op koppeling
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
 STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} heeft twee Koppelen-orders zonder Splitsen-order ertussen
 STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} heeft een Koppelen-order met een verwijderde groep of orderlijst

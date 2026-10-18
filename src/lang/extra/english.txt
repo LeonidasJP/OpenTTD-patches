@@ -1650,6 +1650,10 @@ STR_VEHICLE_STATUS_BROKEN_DOWN_VEL_SHORT                        :{RED}Broken dow
 STR_VEHICLE_STATUS_TRAIN_STUCK_WAIT_RESTRICTION                 :{ORANGE}Waiting due to routing restriction
 STR_VEHICLE_STATUS_TRAIN_WAITING_TIMETABLE                      :{ORANGE}Waiting due to timetable
 STR_VEHICLE_STATUS_TRAIN_REVERSING                              :{ORANGE}Reversing, {VELOCITY}
+STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE                        :{LTBLUE}Coupled to {VEHICLE}
+STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH                      :{LTBLUE}Coupling to {VEHICLE}, {VELOCITY}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED                    :{LTBLUE}Loading / Unloading, coupled to {VEHICLE}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING              :{LTBLUE}Loading / Unloading, waiting for coupling
 STR_VEHICLE_STATUS_TRAIN_MOVING_DEPOT                           :{ORANGE}Moving in depot
 
 STR_VEHICLE_STATUS_TRAIN_STOPPING_VEL_END                       :{RED}Stopping, {VELOCITY}
