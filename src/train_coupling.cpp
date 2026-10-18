@@ -575,33 +575,35 @@ std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles()
 /**
  * Check that an order list never has two couple orders without a split order in between, which would couple a combination again.
  * @param list The order list.
- * @param index The index of the order which gets a new coupling mode.
+ * @param index The index of the order which gets a new coupling mode, or where a new order is inserted.
  * @param new_mode The new coupling mode of that order.
+ * @param insert True if a new station order with  new_mode is inserted at  index.
  * @return True if the sequence of coupling orders is valid.
  */
-bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode)
+bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert)
 {
-	if (list == nullptr) return true;
-	const uint count = list->GetNumOrders();
-	if (count == 0) return true;
+	/* Coupling modes of the station orders, in order list order. */
+	std::vector<OrderCouplingMode> modes;
+	const uint count = list != nullptr ? list->GetNumOrders() : 0;
+	for (uint idx = 0; idx <= count; idx++) {
+		if (idx == index) {
+			modes.push_back(new_mode);
+			if (!insert) continue;
+		}
+		if (idx == count) break;
+		const Order *o = list->GetOrderAt(idx);
+		if (o->IsType(OT_GOTO_STATION)) modes.push_back(o->GetCouplingMode());
+	}
 
 	/* A single couple order is always valid. */
-	uint couple_orders = 0;
-	for (uint idx = 0; idx < count; idx++) {
-		const Order *o = list->GetOrderAt(idx);
-		if (o->IsType(OT_GOTO_STATION) && ((idx == index) ? new_mode : o->GetCouplingMode()) == OrderCouplingMode::Couple) couple_orders++;
-	}
-	if (couple_orders <= 1) return true;
+	if (std::count(modes.begin(), modes.end(), OrderCouplingMode::Couple) <= 1) return true;
 
 	/* Walk the (cyclic) order list twice, the state is only reliable during the second pass. */
 	bool coupled = false;
-	for (uint i = 0; i < 2 * count; i++) {
-		const uint idx = i % count;
-		const Order *o = list->GetOrderAt(idx);
-		const OrderCouplingMode mode = (idx == index) ? new_mode : o->GetCouplingMode();
-		if (!o->IsType(OT_GOTO_STATION)) continue;
+	for (size_t i = 0; i < 2 * modes.size(); i++) {
+		const OrderCouplingMode mode = modes[i % modes.size()];
 		if (mode == OrderCouplingMode::Couple) {
-			if (coupled && i >= count) return false;
+			if (coupled && i >= modes.size()) return false;
 			coupled = true;
 		} else if (mode == OrderCouplingMode::Split) {
 			coupled = false;
@@ -826,6 +828,23 @@ static void ReleaseCouplingTargetReservation(Train *target)
 }
 
 /**
+ * Does the group or order list of the coupling filter of an order still exist?
+ * @param order The couple order.
+ * @return False if the group or order list was deleted.
+ */
+bool IsCouplingFilterDefined(const Order *order)
+{
+	switch (order->GetCouplingFilter()) {
+		case OrderCouplingFilter::Group:
+			return Group::IsValidID(GroupID(order->GetCouplingFilterID()));
+		case OrderCouplingFilter::OrderList:
+			return OrderList::IsValidID(OrderListID(order->GetCouplingFilterID()));
+		default:
+			return true;
+	}
+}
+
+/**
  * Does a train match the coupling filter of a couple order?
  * @param order The couple order.
  * @param t The train.
@@ -833,6 +852,9 @@ static void ReleaseCouplingTargetReservation(Train *target)
  */
 static bool DoesTrainMatchCouplingFilter(const Order *order, const Train *t)
 {
+	/* An undefined filter allows any train, CheckOrders warns about it. */
+	if (!IsCouplingFilterDefined(order)) return true;
+
 	switch (order->GetCouplingFilter()) {
 		case OrderCouplingFilter::Group:
 			return GroupIsInGroup(t->group_id, GroupID(order->GetCouplingFilterID()));

@@ -2596,6 +2596,8 @@ STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... sele
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Warning: a coupled train uses these orders
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}The coupled combination will stop in the depot. Enable "Coupled combination allowed to stop in depot" to suppress this warning
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Coupled combination {VEHICLE} stopped in a depot
+STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} has two couple orders without a split order in between
+STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} has a couple order with a deleted group or order list
 STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Send coupled combination to depot
 STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}This train is coupled to another train. Send the coupled combination to a depot to stop there?
 
