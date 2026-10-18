@@ -184,6 +184,7 @@ struct Train final : public GroundVehicle<Train, VehicleType::Train> {
 
 	VehicleID coupling_target = VehicleID::Invalid(); ///< Train in a station platform to which this train is driving to couple, see train_coupling.h.
 	DiagDirection coupling_dir = DiagDirection::Invalid;    ///< Direction in which this train drives into the platform of #coupling_target, set once the platform is reserved.
+	VehicleID split_partner = VehicleID::Invalid();   ///< Train from which this train was just split, which this train may not drive into, see train_coupling.h.
 
 	/** Create new Train object. @copydoc GroundVehicle::GroundVehicle */
 	Train(VehicleID index) : GroundVehicleBase(index) {}
