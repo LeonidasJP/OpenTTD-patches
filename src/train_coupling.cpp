@@ -946,6 +946,44 @@ static void ProcessPendingTrainSplits()
 	}
 }
 
+/**
+ * Is a train part of a coupled combination, either as head or as passive train?
+ * @param t The head of the train, or the head of the passive train.
+ * @return True if the train is coupled.
+ */
+bool IsTrainInCombination(const Train *t)
+{
+	return t->flags.Test(VehicleRailFlag::CoupledPassiveHead) || IsTrainCoupled(t);
+}
+
+/**
+ * Is a train which uses the same order list as a vehicle currently part of a coupled combination?
+ * @param v The vehicle.
+ * @return True if a train sharing the orders of \a v is coupled.
+ */
+bool IsOrderListUsedByCombination(const Vehicle *v)
+{
+	if (v->type != VehicleType::Train) return false;
+	for (const Vehicle *u = v->FirstShared(); u != nullptr; u = u->NextShared()) {
+		if (IsTrainInCombination(Train::From(u))) return true;
+	}
+	return false;
+}
+
+/**
+ * Should the player be warned that a depot order makes a coupled combination stop in a depot?
+ * @param v A vehicle using the order.
+ * @param order The order.
+ * @return True if the order stops in the depot without allowing coupled combinations, and a train with this order list is coupled.
+ */
+bool ShouldWarnCoupledDepotStop(const Vehicle *v, const Order *order)
+{
+	if (order == nullptr || !order->IsType(OT_GOTO_DEPOT)) return false;
+	if ((order->GetDepotActionType() & ODATFB_HALT) == 0) return false;
+	if (order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) return false;
+	return IsOrderListUsedByCombination(v);
+}
+
 /** Trains which reached their coupling stop location during the current tick. */
 static std::vector<VehicleID> _pending_train_couplings;
 

@@ -1974,7 +1974,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 				break;
 
 			case OT_GOTO_DEPOT:
-				if (mof != MOF_NON_STOP && mof != MOF_DEPOT_ACTION) return CMD_ERROR;
+				if (mof != MOF_NON_STOP && mof != MOF_DEPOT_ACTION && mof != MOF_DEPOT_COUPLED_ALLOWED) return CMD_ERROR;
 				break;
 
 			case OT_GOTO_WAYPOINT:
@@ -2044,6 +2044,11 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_COUPLING_FILTER:
 			if (v->type != VehicleType::Train) return CMD_ERROR;
 			if (data >= to_underlying(OrderCouplingFilter::End)) return CMD_ERROR;
+			break;
+
+		case MOF_DEPOT_COUPLED_ALLOWED:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data > 1) return CMD_ERROR;
 			break;
 
 		case MOF_COUPLING_FILTER_ID:
@@ -2406,6 +2411,13 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 			case MOF_COUPLING_FILTER_ID:
 				order->SetCouplingFilterID(data);
 				break;
+
+			case MOF_DEPOT_COUPLED_ALLOWED: {
+				OrderDepotExtraFlags flags = order->GetDepotExtraFlags();
+				flags.Set(OrderDepotExtraFlag::CoupledAllowed, data != 0);
+				order->SetDepotExtraFlags(flags);
+				break;
+			}
 
 			case MOF_UNLOAD:
 				order->SetUnloadType(static_cast<OrderUnloadType>(data));

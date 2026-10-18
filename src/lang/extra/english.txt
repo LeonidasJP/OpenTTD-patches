@@ -1929,6 +1929,8 @@ STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[couple:
 STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[couple: orders of {VEHICLE}{STRING}]
 STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[couple: {PUSH_COLOUR}{RED}undefined{POP_COLOUR}{STRING}]
 STR_ORDER_COUPLING_ARRIVING_LEADS                               :, arriving train leads
+STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Coupled combination allowed to stop in depot
+STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[coupled allowed]
 
 STR_ORDER_CONDITIONAL_UNDEFINED_STATION                         :{PUSH_COLOUR}{RED}undefined station{POP_COLOUR}
 
@@ -2586,6 +2588,11 @@ STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... coup
 STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... a split order is required before another couple order
 STR_ERROR_TRAIN_COUPLING_NO_GROUPS                              :{WHITE}... there are no train groups
 STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... select a train of your own with orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Warning: a coupled train uses these orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}The coupled combination will stop in the depot. Enable "Coupled combination allowed to stop in depot" to suppress this warning
+STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Coupled combination {VEHICLE} stopped in a depot
+STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Send coupled combination to depot
+STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}This train is coupled to another train. Send the coupled combination to a depot to stop there?
 
 STR_WARNING_PASSWORD_SECURITY                                   :{YELLOW}Warning: Server administrators may be able to read any text entered here.
 STR_NETWORK_NEED_COMPANY_PASSWORD_CAPTION                       :{WHITE}Company is protected. Enter password

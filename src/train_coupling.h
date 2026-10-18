@@ -22,6 +22,8 @@
 
 struct Train;
 struct Vehicle;
+struct Order;
+struct OrderList;
 
 /**
  * Coupling state of a combination of two trains (services).
@@ -48,6 +50,9 @@ const TrainCoupling *GetTrainCoupling(const Train *head);
 Train *GetCoupledPassiveHead(const Train *head);
 Train *GetCouplingCombinationHead(const Train *passive_head);
 bool IsTrainCoupled(const Train *head);
+bool IsTrainInCombination(const Train *t);
+bool IsOrderListUsedByCombination(const Vehicle *v);
+bool ShouldWarnCoupledDepotStop(const Vehicle *v, const Order *order);
 
 CommandCost CheckCanCoupleTrains(const Train *waiting, const Train *arriving);
 void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads);
@@ -58,8 +63,6 @@ void OnTrainCouplingVehicleDeleted(Train *v);
 void ValidateTrainCouplings();
 std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles();
 
-struct OrderList;
-struct Order;
 enum class OrderCouplingMode : uint8_t;
 bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode);
 const Order *GetCurrentCouplingOrder(const Train *v);

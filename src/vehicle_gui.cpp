@@ -20,6 +20,8 @@
 #include "roadveh.h"
 #include "train.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
+#include "textbuf_gui.h"
 #include "aircraft.h"
 #include "depot_map.h"
 #include "group_cmd.h"
@@ -4499,7 +4501,18 @@ public:
 					ShowDropDownList(this, std::move(list), -1, widget, 0, DropDownOptions{}, DDSF_SHARED);
 				} else {
 					this->HandleButtonClick(WID_VV_GOTO_DEPOT);
-					Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, _ctrl_pressed ? DepotCommandFlag::Service : DepotCommandFlags{}, {});
+					const DepotCommandFlags flags = _ctrl_pressed ? DepotCommandFlag::Service : DepotCommandFlags{};
+					const bool cancels = v->current_order.IsType(OT_GOTO_DEPOT);
+					if (!flags.Test(DepotCommandFlag::Service) && !cancels && v->type == VehicleType::Train && IsTrainInCombination(Train::From(v))) {
+						ShowQuery(GetEncodedString(STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION), GetEncodedString(STR_TRAIN_COUPLING_DEPOT_QUERY), this, [](Window *w, bool confirmed) {
+							if (!confirmed) return;
+							const Vehicle *v = Vehicle::GetIfValid(static_cast<VehicleID>(w->window_number));
+							if (v == nullptr) return;
+							Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, DepotCommandFlags{}, {});
+						});
+					} else {
+						Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, flags, {});
+					}
 				}
 				break;
 			case WID_VV_REFIT: // refit
