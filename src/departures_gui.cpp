@@ -213,6 +213,8 @@ protected:
 
 					if (this->source_mode != DSM_LIVE) this->vehicles.push_back(veh);
 					for (const Vehicle *v = veh; v != nullptr; v = v->NextShared()) {
+						/* The heads of passive trains in coupled combinations are not primary vehicles. */
+						if (!v->IsPrimaryVehicle()) continue;
 						if (this->source_mode == DSM_LIVE) this->vehicles.push_back(v);
 
 						if (show_vehicle_name) {

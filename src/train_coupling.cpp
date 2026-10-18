@@ -419,6 +419,11 @@ static void PrepareDepartureAfterSplit(Train *t)
 	const Train *moving_front = t->GetMovingFront();
 	if (IsRailStationTile(moving_front->tile)) {
 		const StationID station = GetStationIndex(moving_front->tile);
+
+		/* The train visited this station while coupled, continue with the next order. */
+		const Order *order = t->GetOrder(t->cur_implicit_order_index);
+		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) t->IncrementImplicitOrderIndex();
+
 		t->last_station_visited = station;
 		t->current_order.MakeLeaveStation();
 		t->current_order.SetDestination(station);
@@ -780,6 +785,12 @@ void ProcessPendingTrainCouplings()
 		ClearCouplingApproach(arriving);
 		if (ret.Failed()) {
 			Debug(misc, 1, "Train coupling of {} to {} failed: {}", arriving->index, target->index, ret.GetErrorMessage());
+			for (const Train *t : { target, arriving }) {
+				for (const Train *u : { t, t->Last() }) {
+					Debug(misc, 1, "  train {} {}: pos {}x{} z {} dir {} len {} backwards {} track 0x{:X}", t->unitnumber, u == t ? "head" : "last",
+							u->x_pos, u->y_pos, u->z_pos, u->direction, u->gcache.cached_veh_length, u->IsDrivingBackwards(), u->track);
+				}
+			}
 			continue;
 		}
 		CoupleTrains(target, arriving, arriving_leads);

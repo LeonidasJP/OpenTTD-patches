@@ -619,7 +619,7 @@ nlohmann::json MakePerOrderListVehicleSet(GroupID group_id, Owner owner, std::op
 
 			auto vehicles_array = nlohmann::json::array();
 			for (const Vehicle *u = v->FirstShared(); u != nullptr; u = u->NextShared()) {
-				if (u->group_id == group_id) vehicles_array.push_back(u->index.base());
+				if (u->group_id == group_id && u->IsPrimaryVehicle()) vehicles_array.push_back(u->index.base());
 			}
 			json.push_back({
 				{"vehicles", std::move(vehicles_array)},
