@@ -677,6 +677,7 @@ static const OrderConditionVariable _order_conditional_variable[] = {
 	OrderConditionVariable::DispatchSlot,
 	OrderConditionVariable::Percent,
 	OrderConditionVariable::DrivingBackwards,
+	OrderConditionVariable::CouplingRole,
 	OrderConditionVariable::Unconditionally,
 };
 
@@ -863,7 +864,8 @@ StringID OrderStringForVariable(const Vehicle *v, OrderConditionVariable ocv)
 		STR_ORDER_CONDITIONAL_DISPATCH_SLOT,
 		STR_ORDER_CONDITIONAL_CARGO_WAITING_AMOUNT_PERCENTAGE,
 		STR_ORDER_CONDITIONAL_TRAIN_IN_SLOT_GROUP,
-		STR_ORDER_CONDITIONAL_DRIVING_BACKWARDS
+		STR_ORDER_CONDITIONAL_DRIVING_BACKWARDS,
+		STR_ORDER_CONDITIONAL_COUPLING_ROLE,
 	};
 	return ocv_names[to_underlying(ocv)];
 }
@@ -1294,9 +1296,12 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 				if (ocv == OrderConditionVariable::MaxSpeed) {
 					value = ConvertSpeedToDisplaySpeed(value, v->type);
 				}
+				StringID variable_str = OrderStringForVariable(v, ocv);
+				if (ocv == OrderConditionVariable::FreePlatforms) variable_str = STR_ORDER_CONDITIONAL_NEXT_STATION;
+				if (ocv == OrderConditionVariable::CouplingRole) variable_str = STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + std::min<uint>(value, to_underlying(OrderCouplingRole::End) - 1);
 				AppendStringInPlace(line, (occ == OrderConditionComparator::IsTrue || occ == OrderConditionComparator::IsFalse) ? STR_ORDER_CONDITIONAL_TRUE_FALSE : STR_ORDER_CONDITIONAL_NUM,
 						order->GetConditionSkipToOrder() + 1,
-						(ocv == OrderConditionVariable::FreePlatforms) ? STR_ORDER_CONDITIONAL_NEXT_STATION : OrderStringForVariable(v, ocv),
+						variable_str,
 						STR_ORDER_CONDITIONAL_COMPARATOR_EQUALS + to_underlying(occ),
 						value);
 			}
@@ -2817,6 +2822,9 @@ public:
 				const Order *order = this->vehicle->GetOrder(sel);
 
 				if (order != nullptr && order->IsType(OT_CONDITIONAL)) {
+					if (order->GetConditionVariable() == OrderConditionVariable::CouplingRole) {
+						return GetString(STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + std::min<uint>(order->GetConditionValue(), to_underlying(OrderCouplingRole::End) - 1));
+					}
 					uint value;
 					switch (order->GetConditionVariable()) {
 						case OrderConditionVariable::CargoLoadPercentage:
@@ -3497,7 +3505,7 @@ public:
 				const OrderConditionVariable current_ocv = this->vehicle->GetOrder(this->OrderGetSel())->GetConditionVariable();
 				DropDownList list;
 				for (const auto &ocv : _order_conditional_variable) {
-					if (this->vehicle->type != VehicleType::Train && (ocv == OrderConditionVariable::FreePlatforms || ocv == OrderConditionVariable::DrivingBackwards)) {
+					if (this->vehicle->type != VehicleType::Train && (ocv == OrderConditionVariable::FreePlatforms || ocv == OrderConditionVariable::DrivingBackwards || ocv == OrderConditionVariable::CouplingRole)) {
 						continue;
 					}
 					if (current_ocv != ocv) {
@@ -3569,6 +3577,7 @@ public:
 					case OrderConditionVariable::VehicleInSlotGroup:
 					case OrderConditionVariable::DispatchSlot:
 					case OrderConditionVariable::DrivingBackwards:
+					case OrderConditionVariable::CouplingRole:
 						mask = 0x3F;
 						break;
 
@@ -3591,6 +3600,14 @@ public:
 
 			case WID_O_COND_VALUE: {
 				const Order *order = this->vehicle->GetOrder(this->OrderGetSel());
+				if (order->GetConditionVariable() == OrderConditionVariable::CouplingRole) {
+					DropDownList list;
+					for (uint role = 0; role < to_underlying(OrderCouplingRole::End); role++) {
+						list.push_back(MakeDropDownListStringItem(STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + role, role, false));
+					}
+					ShowDropDownList(this, std::move(list), order->GetConditionValue(), WID_O_COND_VALUE, 0, DropDownOptions{}, DDSF_SHARED);
+					break;
+				}
 				uint value;
 				CharSetFilter charset_filter = CS_NUMERAL;
 				switch (order->GetConditionVariable()) {
@@ -3858,6 +3875,10 @@ public:
 
 			case WID_O_COND_VARIABLE:
 				this->ModifyOrder(this->OrderGetSel(), MOF_COND_VARIABLE, index);
+				break;
+
+			case WID_O_COND_VALUE:
+				this->ModifyOrder(this->OrderGetSel(), MOF_COND_VALUE, index);
 				break;
 
 			case WID_O_COND_COMPARATOR: {

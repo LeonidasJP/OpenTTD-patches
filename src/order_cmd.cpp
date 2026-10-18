@@ -1278,6 +1278,12 @@ static CommandCost PreInsertOrderCheck(Vehicle *v, const Order &new_order, CmdIn
 					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
 					break;
 
+				case OrderConditionVariable::CouplingRole:
+					if (v->type != VehicleType::Train) return CMD_ERROR;
+					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
+					if (new_order.GetConditionValue() >= to_underlying(OrderCouplingRole::End)) return CMD_ERROR;
+					break;
+
 				case OrderConditionVariable::Unconditionally:
 					if (occ != OrderConditionComparator::Equal) return CMD_ERROR;
 					if (new_order.GetConditionValue() != 0) return CMD_ERROR;
@@ -2125,7 +2131,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_COND_VARIABLE: {
 			OrderConditionVariable cond_variable = static_cast<OrderConditionVariable>(data);
 			if (cond_variable >= OrderConditionVariable::End) return CMD_ERROR;
-			if ((cond_variable == OrderConditionVariable::FreePlatforms || cond_variable == OrderConditionVariable::DrivingBackwards) && v->type != VehicleType::Train) return CMD_ERROR;
+			if ((cond_variable == OrderConditionVariable::FreePlatforms || cond_variable == OrderConditionVariable::DrivingBackwards || cond_variable == OrderConditionVariable::CouplingRole) && v->type != VehicleType::Train) return CMD_ERROR;
 			break;
 		}
 
@@ -2142,6 +2148,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 				case OrderConditionVariable::CargoWaiting:
 				case OrderConditionVariable::DispatchSlot:
 				case OrderConditionVariable::DrivingBackwards:
+				case OrderConditionVariable::CouplingRole:
 					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
 					break;
 
@@ -2232,6 +2239,10 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 					if (submode < ODCS_BEGIN || submode >= ODCS_END) return CMD_ERROR;
 					break;
 				}
+
+				case OrderConditionVariable::CouplingRole:
+					if (data >= to_underlying(OrderCouplingRole::End)) return CMD_ERROR;
+					break;
 
 				default:
 					if (data > 2047) return CMD_ERROR;
@@ -2568,6 +2579,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 						break;
 					case OrderConditionVariable::RequiresService:
 					case OrderConditionVariable::DrivingBackwards:
+					case OrderConditionVariable::CouplingRole:
 						if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) order->SetConditionComparator(OrderConditionComparator::IsTrue);
 						order->SetConditionValue(0);
 						break;
@@ -3795,6 +3807,7 @@ VehicleOrderID ProcessConditionalOrder(const Order *order, const Vehicle *v, Pro
 		case OrderConditionVariable::RequiresService:     skip_order = OrderConditionCompare(occ, v->NeedsServicing(),               value); break;
 		case OrderConditionVariable::RemainingLifetime:   skip_order = OrderConditionCompare(occ, std::max(DateDeltaToYearDelta(v->max_age - v->age + DAYS_IN_LEAP_YEAR - 1).base(), 0), value); break;
 		case OrderConditionVariable::DrivingBackwards:    skip_order = OrderConditionCompare(occ, v->type == VehicleType::Train && (Train::From(v)->tcache.cached_tflags & TCF_NO_DRIVING_CAB), value); break;
+		case OrderConditionVariable::CouplingRole:        skip_order = OrderConditionCompare(occ, v->type == VehicleType::Train && HasTrainCouplingRole(Train::From(v), static_cast<OrderCouplingRole>(value)), value); break;
 		case OrderConditionVariable::Unconditionally:     skip_order = true; break;
 		case OrderConditionVariable::CargoWaiting: {
 			StationID next_station = order->GetConditionStationID();

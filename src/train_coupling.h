@@ -53,6 +53,9 @@ bool IsTrainCoupled(const Train *head);
 bool IsTrainInCombination(const Train *t);
 bool IsOrderListUsedByCombination(const Vehicle *v);
 bool ShouldWarnCoupledDepotStop(const Vehicle *v, const Order *order);
+enum class OrderCouplingRole : uint8_t;
+bool HasTrainCouplingRole(const Train *t, OrderCouplingRole role);
+void OnTrainLeavingCouplingStation(Train *t);
 
 CommandCost CheckCanCoupleTrains(const Train *waiting, const Train *arriving);
 void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads);
