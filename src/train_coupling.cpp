@@ -578,9 +578,11 @@ std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles()
  * @param index The index of the order which gets a new coupling mode, or where a new order is inserted.
  * @param new_mode The new coupling mode of that order.
  * @param insert True if a new station order with  new_mode is inserted at  index.
+ * @param cyclic True to also check from the last order back to the first order. Editing an order list only checks from top to bottom,
+ *               so the player can add the couple orders before the split orders; the order check warns about the cyclic case.
  * @return True if the sequence of coupling orders is valid.
  */
-bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert)
+bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert, bool cyclic)
 {
 	/* Coupling modes of the station orders, in order list order. */
 	std::vector<OrderCouplingMode> modes;
@@ -598,12 +600,13 @@ bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCoupli
 	/* A single couple order is always valid. */
 	if (std::count(modes.begin(), modes.end(), OrderCouplingMode::Couple) <= 1) return true;
 
-	/* Walk the (cyclic) order list twice, the state is only reliable during the second pass. */
+	/* Walk the order list, or the cyclic order list twice, where the state is only reliable during the second pass. */
+	const size_t first_checked = cyclic ? modes.size() : 0;
 	bool coupled = false;
-	for (size_t i = 0; i < 2 * modes.size(); i++) {
+	for (size_t i = 0; i < first_checked + modes.size(); i++) {
 		const OrderCouplingMode mode = modes[i % modes.size()];
 		if (mode == OrderCouplingMode::Couple) {
-			if (coupled && i >= modes.size()) return false;
+			if (coupled && i >= first_checked) return false;
 			coupled = true;
 		} else if (mode == OrderCouplingMode::Split) {
 			coupled = false;

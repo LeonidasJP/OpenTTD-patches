@@ -67,7 +67,7 @@ void ValidateTrainCouplings();
 std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles();
 
 enum class OrderCouplingMode : uint8_t;
-bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert = false);
+bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert = false, bool cyclic = false);
 bool IsCouplingFilterDefined(const Order *order);
 const Order *GetCurrentCouplingOrder(const Train *v);
 void UpdateCouplingApproachFromOrders(Train *v);
