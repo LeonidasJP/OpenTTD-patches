@@ -74,6 +74,9 @@
 #include "company_cmd.h"
 #include "misc_cmd.h"
 #include "order_backup.h"
+#include "train.h"
+#include "train_coupling.h"
+#include "train_coupling_cmd.h"
 #include "cheat_func.h"
 #include "walltime_func.h"
 #include <time.h>
@@ -356,6 +359,157 @@ static bool ConResetTile(std::span<std::string_view> argv)
 	return false;
 }
 #endif /* _DEBUG */
+
+/**
+ * Find a train of the local company by its unit number.
+ * @param arg The unit number as string.
+ * @return The train, or nullptr if not found.
+ */
+static Train *FindLocalTrainByUnitNumber(std::string_view arg)
+{
+	auto unit = ParseType<UnitID>(arg);
+	if (!unit.has_value()) return nullptr;
+	for (Train *t : Train::IterateFrontOnly()) {
+		if (t->owner == _local_company && t->unitnumber == *unit && t->IsFrontEngine()) return t;
+	}
+	return nullptr;
+}
+
+/**
+ * Couple two trains which are stopped directly behind each other in a station.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCoupleTrains(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3 || argv.size() > 4) {
+		IConsolePrint(CC_HELP, "Couple two trains stopped directly behind each other in a station platform. Usage: 'couple_trains <waiting train number> <arriving train number> [arriving|waiting]'.");
+		IConsolePrint(CC_HELP, "The last argument selects which train leads the combination, the default is the waiting train.");
+		return true;
+	}
+
+	Train *waiting = FindLocalTrainByUnitNumber(argv[1]);
+	Train *arriving = FindLocalTrainByUnitNumber(argv[2]);
+	if (waiting == nullptr || arriving == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	bool arriving_leads = false;
+	if (argv.size() == 4) {
+		if (argv[3] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[3] != "waiting") {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::CoupleTrains>::Do(DoCommandFlags{}, waiting->index, arriving->index, arriving_leads);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't couple trains: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::CoupleTrains>::Post(STR_ERROR_CAN_T_COUPLE_TRAINS, waiting->tile, waiting->index, arriving->index, arriving_leads);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "couple_trains: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Split a combination of coupled trains.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSplitTrain(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Split a combination of coupled trains. Usage: 'split_train <train number>'.");
+		return true;
+	}
+
+	Train *head = FindLocalTrainByUnitNumber(argv[1]);
+	if (head == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::SplitCoupledTrain>::Do(DoCommandFlags{}, head->index);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't split train: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::SplitCoupledTrain>::Post(STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN, head->tile, head->index);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "split_train: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Debug: cut a train into two trains outside a depot.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCutTrain(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: cut a stopped train into two trains, outside a depot. Usage: 'cut_train <train number> <vehicle position>'.");
+		IConsolePrint(CC_HELP, "The rear part starts at the given vehicle position (1 = first vehicle), and must start with an engine.");
+		return true;
+	}
+
+	Train *head = FindLocalTrainByUnitNumber(argv[1]);
+	auto pos = ParseType<uint>(argv[2]);
+	if (head == nullptr || !pos.has_value() || *pos < 2) {
+		IConsolePrint(CC_ERROR, "Train or vehicle position not found.");
+		return true;
+	}
+
+	Train *v = head;
+	for (uint i = 1; i < *pos && v != nullptr; i++) v = v->GetNextVehicle();
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Vehicle position not found.");
+		return true;
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::CutTrain>::Do(DoCommandFlags{}, v->index);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't cut train: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::CutTrain>::Post(STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN, head->tile, v->index);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "cut_train: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * List the coupled train combinations.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConListTrainCouplings(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "List all combinations of coupled trains. Usage: 'list_train_couplings'.");
+		return true;
+	}
+
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (!t->IsFrontEngine()) continue;
+		uint count = 0;
+		for (const Train *u = t; u != nullptr; u = u->Next()) count++;
+		const Train *mf = t->GetMovingFront();
+		IConsolePrint(CC_DEFAULT, "Train: id {}, unit {}, owner {}, vehicles {}, head {}x{}, moving front {}x{} pos {}x{} dir {}, speed {}, order type {} dest {} idx {}, lost {}, backwards {}, stopped {}, coupled {}",
+				t->index, t->unitnumber, t->owner, count, TileX(t->tile), TileY(t->tile), TileX(mf->tile), TileY(mf->tile), mf->x_pos, mf->y_pos, mf->direction,
+				t->cur_speed, t->current_order.GetType(), t->current_order.GetDestination().value, t->cur_real_order_index,
+				t->vehicle_flags.Test(VehicleFlag::PathfinderLost) ? "yes" : "no", t->IsDrivingBackwards() ? "yes" : "no",
+				t->vehstatus.Test(VehState::Stopped) ? "yes" : "no", IsTrainCoupled(t) ? "yes" : "no");
+	}
+	for (const auto &it : _train_couplings) {
+		const TrainCoupling &tc = it.second;
+		const Train *head = Train::GetIfValid(tc.head);
+		const Train *passive = Train::GetIfValid(tc.passive_head);
+		IConsolePrint(CC_DEFAULT, "Combination: head {} (unit {}), passive head {} (unit {}), passive group {}, identities swapped: {}",
+				tc.head, head != nullptr ? head->unitnumber : 0, tc.passive_head, passive != nullptr ? passive->unitnumber : 0, tc.passive_group, tc.identities_swapped ? "yes" : "no");
+	}
+	return true;
+}
 
 /**
  * Zoom map to given level.
@@ -4472,6 +4626,10 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("getsysdate",              ConGetSysDate);
 	IConsole::CmdRegister("quit",                    ConExit);
 	IConsole::CmdRegister("resetengines",            ConResetEngines,     ConHookNoNetwork);
+	IConsole::CmdRegister("couple_trains",           ConCoupleTrains);
+	IConsole::CmdRegister("split_train",             ConSplitTrain);
+	IConsole::CmdRegister("cut_train",               ConCutTrain);
+	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);

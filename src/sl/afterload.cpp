@@ -28,6 +28,7 @@
 #include "../date_func.h"
 #include "../roadveh.h"
 #include "../train.h"
+#include "../train_coupling.h"
 #include "../station_base.h"
 #include "../waypoint_base.h"
 #include "../roadstop_base.h"
@@ -3549,6 +3550,8 @@ bool AfterLoadGame()
 
 	/* Update all vehicles: Phase 2 */
 	AfterLoadVehiclesPhase2(true);
+
+	ValidateTrainCouplings();
 
 	/* The center of train vehicles was changed, fix up spacing. */
 	if (IsSavegameVersionBefore(SLV_164)) FixupTrainLengths();

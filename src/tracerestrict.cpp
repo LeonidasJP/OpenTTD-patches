@@ -35,6 +35,7 @@
 #include "strings_func.h"
 #include "programmable_signals_cmd.h"
 #include "3rdparty/cpp-btree/btree_map.h"
+#include "3rdparty/cpp-btree/btree_set.h"
 
 #include "table/strings.h"
 
@@ -3656,6 +3657,32 @@ void TraceRestrictRemoveVehicleFromAllSlots(VehicleID vehicle_id)
 }
 
 /** Replace all instance of a vehicle ID with another, in all slot occupants */
+void TraceRestrictSwapVehicleOccupantInAllSlots(VehicleID a, VehicleID b)
+{
+	btree::btree_set<TraceRestrictSlotID> slots;
+	for (VehicleID id : { a, b }) {
+		const auto start = _slot_vehicle_index.lower_bound(id);
+		auto it = start;
+		for (; it != _slot_vehicle_index.end() && it->first == id; ++it) {
+			slots.insert(it->second);
+		}
+		_slot_vehicle_index.erase(start, it);
+	}
+	for (TraceRestrictSlotID slot_id : slots) {
+		TraceRestrictSlot *slot = TraceRestrictSlot::Get(slot_id);
+		for (VehicleID &id : slot->occupants) {
+			if (id == a) {
+				id = b;
+				_slot_vehicle_index.insert({ b, slot_id });
+			} else if (id == b) {
+				id = a;
+				_slot_vehicle_index.insert({ a, slot_id });
+			}
+		}
+	}
+	if (!slots.empty()) InvalidateWindowClassesData(WindowClass::TraceRestrictSlots);
+}
+
 void TraceRestrictTransferVehicleOccupantInAllSlots(VehicleID from, VehicleID to)
 {
 	ankerl::svector<TraceRestrictSlotID, 16> slots;
