@@ -112,6 +112,12 @@ Voorbeeld met één gedeelde orderlijst (A→B met twee stellen, B→C met één
 7  A
 ```
 
+*Gebouwd:* de conditiewaarde kiest de rol: 0 = gekoppeld, 1 = leidt de combinatie, 2 = afgesplitst bij de laatste splitsing (vlag `SplitOffLast`), 3 = laatste koppeling mislukt. Die laatste vlag (`CouplingFailedLast`) wordt gezet als een trein een `Koppelen`-order verlaat zonder gekoppeld te zijn, en gewist als hij gekoppeld vertrekt. Alleen "is waar" en "is onwaar" zijn toegestaan.
+
+### 3.7 JSON-export van orders
+
+*Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`) en `coupling-filter-id`. Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
+
 ### 3.6 Depotorder (zie ook §8)
 
 Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toegestaan"**.
@@ -371,7 +377,7 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
 
 1. **Fase 1 – kern:** het record, `CoupleTrains` en `SplitTrain` (hoogstens twee treinen). Een debugcommando om handmatig te koppelen en te splitsen. Savegame-ondersteuning. Het depot vergrendelen.
 2. **Fase 2 – aanrijden:** de gedeeltelijke perronreservering, de snelheden van 40 en 15 km/u, het koppelpunt, de uitzondering voor botsingen, realistisch remmen en het rangeerbeeld.
-3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders.
+3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders. *Gebouwd.* Nog niet gedaan: een melding bij "alle voertuigen naar depot" vanuit een voertuiglijst, en de volgordecontrole bij het invoegen van de orders van een ander voertuig.
 4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel.
 5. **Fase 5 – seinbeeld:** knipperende seinen, de recolour-sprites, de groen-geel-variant en de NewGRF-bit 25 met documentatie in `newgrf-additions.html`.
 
