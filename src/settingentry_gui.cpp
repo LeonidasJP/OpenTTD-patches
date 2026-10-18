@@ -1037,6 +1037,8 @@ SettingsContainer &GetSettingsTree()
 			limitations->Add(new SettingEntry("vehicle.max_ships"));
 			limitations->Add(new SettingEntry("vehicle.max_train_length"));
 			limitations->Add(new SettingEntry("vehicle.through_load_speed_limit"));
+			limitations->Add(new SettingEntry("vehicle.train_coupling_speed"));
+			limitations->Add(new SettingEntry("vehicle.train_coupling_final_speed"));
 			limitations->Add(new SettingEntry("vehicle.rail_depot_speed_limit"));
 			limitations->Add(new SettingEntry("station.station_spread"));
 			limitations->Add(new SettingEntry("station.distant_join_stations"));

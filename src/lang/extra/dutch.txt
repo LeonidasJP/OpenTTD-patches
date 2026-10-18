@@ -127,3 +127,7 @@ STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... trei
 STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... trein is al gekoppeld aan een andere trein
 STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... trein is niet gekoppeld aan een andere trein
 STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... gekoppelde treinen kunnen alleen omgebouwd of gestart/gestopt worden
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :De maximaal toegestane snelheid voor treinen die een bezet perron oprijden om aan een andere trein te koppelen, vanaf het laatste sein voor het perron
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Maximumsnelheid laatste nadering bij koppelen: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED_HELPTEXT          :De maximaal toegestane snelheid voor treinen op de laatste tegel voor het koppelen aan een andere trein

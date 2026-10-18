@@ -35,6 +35,7 @@ btree::btree_map<VehicleID, TrainCoupling> _train_couplings;
 
 /* Helpers from train_cmd.cpp */
 void NormaliseSubtypes(Train *chain);
+void FlipTrainForCoupling(Train *consist);
 
 /** Vehicle flags which belong to the train identity (service), and not to the physical vehicles. */
 static constexpr VehicleFlags VEHICLE_FLAGS_IDENTITY = {
@@ -490,6 +491,11 @@ Train *SplitCombination(Train *head)
  */
 void OnTrainCouplingVehicleDeleted(Train *v)
 {
+	if (v->IsFrontEngine()) {
+		for (Train *t : Train::IterateFrontOnly()) {
+			if (t->coupling_target == v->index) ClearCouplingApproach(t);
+		}
+	}
 	if (v->flags.Test(VehicleRailFlag::CoupledCombination)) {
 		_train_couplings.erase(v->index);
 		v->flags.Reset(VehicleRailFlag::CoupledCombination);
@@ -505,6 +511,22 @@ void OnTrainCouplingVehicleDeleted(Train *v)
 		}
 		v->flags.Reset(VehicleRailFlag::CoupledPassiveHead);
 	}
+}
+
+/**
+ * Get all vehicles which can own an order list: the front vehicles, and the heads of the passive trains in coupled combinations.
+ * The heads of passive trains keep their orders while coupled, but are not visited by Vehicle::IterateFrontOnly.
+ * @return The vehicles.
+ */
+std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles()
+{
+	std::vector<Vehicle *> result;
+	for (Vehicle *v : Vehicle::IterateFrontOnly()) result.push_back(v);
+	for (const auto &it : _train_couplings) {
+		Train *passive = Train::GetIfValid(it.second.passive_head);
+		if (passive != nullptr) result.push_back(passive);
+	}
+	return result;
 }
 
 /**
@@ -532,6 +554,250 @@ void ValidateTrainCouplings()
 			t->flags.Reset(VehicleRailFlag::CoupledCombination);
 		}
 	}
+}
+
+/**
+ * Get the train to which a train is driving to couple, if the coupling is (still) possible.
+ * @param v The approaching train.
+ * @return The target train, or nullptr if there is no valid target.
+ */
+Train *GetCouplingApproachTarget(const Train *v)
+{
+	if (v->coupling_target == VehicleID::Invalid()) return nullptr;
+	Train *target = Train::GetIfValid(v->coupling_target);
+	if (target == nullptr || target == v || !target->IsFrontEngine() || target->owner != v->owner) return nullptr;
+	if (target->vehstatus.Test(VehState::Crashed) || v->vehstatus.Test(VehState::Crashed)) return nullptr;
+	if (IsTrainCoupled(target) || IsTrainCoupled(v)) return nullptr;
+	if (target->cur_speed != 0 || !IsRailStationTile(target->tile)) return nullptr;
+	if (!IsTrainCompletelyInStation(target, GetStationIndex(target->tile))) return nullptr;
+
+	/* The approaching train must be heading for the station of the target. */
+	const StationID station = GetStationIndex(target->tile);
+	if (v->current_order.IsType(OT_GOTO_STATION)) {
+		if (v->current_order.GetDestination() != station) return nullptr;
+	} else if (!v->current_order.IsAnyLoadingType() || v->last_station_visited != station) {
+		return nullptr;
+	}
+	return target;
+}
+
+/**
+ * Is this tile part of the platform on which the coupling target of a train is waiting?
+ * @param v The approaching train.
+ * @param tile The tile to check.
+ * @return True if the tile is part of the platform of the coupling target.
+ */
+bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile)
+{
+	const Train *target = GetCouplingApproachTarget(v);
+	if (target == nullptr || !IsRailStationTile(tile) || !IsCompatibleTrainStationTile(tile, target->tile)) return false;
+
+	/* Walk along the platform from the tile to find the target. */
+	const Axis axis = GetRailStationAxis(tile);
+	for (DiagDirection dir : { AxisToDiagDir(axis), ReverseDiagDir(AxisToDiagDir(axis)) }) {
+		const TileIndexDiff diff = TileOffsByDiagDir(dir);
+		for (TileIndex t = tile; IsCompatibleTrainStationTile(t, tile); t = TileAdd(t, diff)) {
+			if (t == target->tile || t == target->Last()->tile) return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Get the position of a point along a direction of travel.
+ * @param x X coordinate.
+ * @param y Y coordinate.
+ * @param dir Direction of travel.
+ * @return Position, increasing in the direction of travel.
+ */
+static int GetCoordinateAlongDirection(int x, int y, DiagDirection dir)
+{
+	switch (dir) {
+		case DiagDirection::NE: return -x;
+		case DiagDirection::SE: return y;
+		case DiagDirection::SW: return x;
+		case DiagDirection::NW: return -y;
+		default: NOT_REACHED();
+	}
+}
+
+/**
+ * Get the position of a vehicle in a platform, measured from the begin of the platform in the direction of travel.
+ * This uses the same units as GetTrainStopLocation.
+ * @param v The vehicle, which must be on a platform tile.
+ * @param dir The direction of travel.
+ * @return The position of the centre of the vehicle.
+ */
+static int GetPositionFromPlatformStart(const Train *v, DiagDirection dir)
+{
+	const TileIndexDiff diff = TileOffsByDiagDir(dir);
+	TileIndex start = v->tile;
+	while (IsCompatibleTrainStationTile(TileAdd(start, -diff), v->tile)) start = TileAdd(start, -diff);
+
+	int start_x = TileX(start) * TILE_SIZE;
+	int start_y = TileY(start) * TILE_SIZE;
+	if (dir == DiagDirection::NE) start_x += TILE_SIZE - 1;
+	if (dir == DiagDirection::NW) start_y += TILE_SIZE - 1;
+
+	return GetCoordinateAlongDirection(v->x_pos, v->y_pos, dir) - GetCoordinateAlongDirection(start_x, start_y, dir);
+}
+
+/**
+ * Get the location where the moving front of an approaching train should stop to couple to its target.
+ * The location is measured from the begin of the platform in the direction of travel, in the same way as GetTrainStopLocation.
+ * @param v The approaching train.
+ * @param dir The direction in which the train drives into the platform.
+ * @return The location of the centre of the moving front vehicle, or std::nullopt if the train can not stop to couple.
+ */
+std::optional<int> GetCouplingStopLocation(const Train *v, DiagDirection dir)
+{
+	const Train *target = GetCouplingApproachTarget(v);
+	if (target == nullptr || !IsValidDiagDirection(dir) || DiagDirToAxis(dir) != GetRailStationAxis(target->tile)) return std::nullopt;
+
+	/* The end of the target nearest to the approaching train. */
+	const Train *first = target;
+	const Train *last = target->Last();
+	const Train *near = GetCoordinateAlongDirection(first->x_pos, first->y_pos, dir) <= GetCoordinateAlongDirection(last->x_pos, last->y_pos, dir) ? first : last;
+
+	const int near_position = GetPositionFromPlatformStart(near, dir);
+
+	/* Stop such that the moving front is positioned as the next vehicle in a chain after the near end of the target. */
+	const Train *front = v->GetMovingFront();
+	const int stop = near_position - (near->gcache.cached_veh_length / 2 + (front->gcache.cached_veh_length + 1) / 2);
+	if (stop < 0) return std::nullopt;
+	return stop;
+}
+
+/**
+ * Get the remaining distance until the moving front of an approaching train reaches its coupling stop location.
+ * @param v The approaching train, of which the moving front must be on the platform of the coupling target.
+ * @return The remaining distance, or std::nullopt if the train can not stop to couple.
+ */
+std::optional<int> GetCouplingStopDistance(const Train *v)
+{
+	const Train *moving_front = v->GetMovingFront();
+	const Direction direction = moving_front->GetMovingDirection();
+	if (!IsDiagonalDirection(direction) || !IsRailStationTile(moving_front->tile)) return std::nullopt;
+	const DiagDirection dir = DirToDiagDir(direction);
+	std::optional<int> stop = GetCouplingStopLocation(v, dir);
+	if (!stop.has_value()) return std::nullopt;
+	return *stop - GetPositionFromPlatformStart(moving_front, dir);
+}
+
+/**
+ * Is a train approaching this train to couple?
+ * @param target The train which is waiting.
+ * @return True if a train is approaching to couple.
+ */
+bool IsTrainBeingApproachedForCoupling(const Train *target)
+{
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (t->coupling_target == target->index && t->IsFrontEngine() && GetCouplingApproachTarget(t) == target) return true;
+	}
+	return false;
+}
+
+/**
+ * Stop approaching a train to couple.
+ * @param v The approaching train.
+ */
+void ClearCouplingApproach(Train *v)
+{
+	v->coupling_target = VehicleID::Invalid();
+	v->coupling_dir = DiagDirection::Invalid;
+	v->flags.Reset({VehicleRailFlag::CouplingArrivingLeads, VehicleRailFlag::CouplingSpeedLimit});
+	SetWindowDirty(WindowClass::VehicleView, v->index);
+}
+
+/** Trains which reached their coupling stop location during the current tick. */
+static std::vector<VehicleID> _pending_train_couplings;
+
+/**
+ * A train which is approaching another train to couple reached its stop location in the station.
+ * The coupling is done after all vehicles have been ticked, as the train might currently be moving.
+ * @param consist The approaching train.
+ */
+void OnCouplingTrainEnteredStation(Train *consist)
+{
+	if (GetCouplingApproachTarget(consist) == nullptr) return;
+	_pending_train_couplings.push_back(consist->index);
+}
+
+/** Couple the trains which reached their coupling target during this tick. */
+void ProcessPendingTrainCouplings()
+{
+	if (_pending_train_couplings.empty()) return;
+
+	std::vector<VehicleID> pending;
+	pending.swap(_pending_train_couplings);
+	for (VehicleID id : pending) {
+		Train *arriving = Train::GetIfValid(id);
+		if (arriving == nullptr || !arriving->IsFrontEngine()) continue;
+		Train *target = GetCouplingApproachTarget(arriving);
+		if (target == nullptr) continue;
+
+		const bool arriving_leads = arriving->flags.Test(VehicleRailFlag::CouplingArrivingLeads);
+		arriving->cur_speed = 0;
+		arriving->subspeed = 0;
+		CommandCost ret = CheckCanCoupleTrains(target, arriving);
+		if (ret.Failed() && ret.GetErrorMessage() == STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT) {
+			/* The trains touch head to head or tail to tail, turn the arriving train around. */
+			FlipTrainForCoupling(arriving);
+			ret = CheckCanCoupleTrains(target, arriving);
+			if (ret.Failed()) FlipTrainForCoupling(arriving);
+		}
+		ClearCouplingApproach(arriving);
+		if (ret.Failed()) {
+			Debug(misc, 1, "Train coupling of {} to {} failed: {}", arriving->index, target->index, ret.GetErrorMessage());
+			continue;
+		}
+		CoupleTrains(target, arriving, arriving_leads);
+	}
+}
+
+/**
+ * Do two trains touch because one is approaching the other to couple? Such a contact must not lead to a crash.
+ * @param a The first train.
+ * @param b The second train.
+ * @return True if one train is approaching the other to couple.
+ */
+bool IsCouplingApproachCollision(const Train *a, const Train *b)
+{
+	return (a->coupling_target == b->index && GetCouplingApproachTarget(a) == b) ||
+			(b->coupling_target == a->index && GetCouplingApproachTarget(b) == a);
+}
+
+/**
+ * Set or clear the train to which a train should drive to couple.
+ * @param flags Type of operation.
+ * @param veh_id The approaching train.
+ * @param target_id The train to couple to, or VehicleID::Invalid() to stop approaching.
+ * @param arriving_leads Whether the approaching train leads the combination.
+ * @return The cost of this operation or an error.
+ */
+CommandCost CmdSetTrainCouplingTarget(DoCommandFlags flags, VehicleID veh_id, VehicleID target_id, bool arriving_leads)
+{
+	Train *v = Train::GetIfValid(veh_id);
+	if (v == nullptr || !v->IsFrontEngine()) return CMD_ERROR;
+
+	CommandCost ret = CheckOwnership(v->owner);
+	if (ret.Failed()) return ret;
+
+	if (target_id != VehicleID::Invalid()) {
+		Train *target = Train::GetIfValid(target_id);
+		if (target == nullptr || target == v || !target->IsFrontEngine() || target->owner != v->owner) return CMD_ERROR;
+		if (IsTrainCoupled(target) || IsTrainCoupled(v)) return CommandCost(STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED);
+	}
+
+	if (flags.Test(DoCommandFlag::Execute)) {
+		ClearCouplingApproach(v);
+		if (target_id != VehicleID::Invalid()) {
+			v->coupling_target = target_id;
+			v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, arriving_leads);
+		}
+	}
+
+	return CommandCost();
 }
 
 /**

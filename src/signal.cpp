@@ -14,6 +14,7 @@
 #include "vehicle_func.h"
 #include "viewport_func.h"
 #include "train.h"
+#include "train_coupling.h"
 #include "company_base.h"
 #include "gui.h"
 #include "table/strings.h"
@@ -1710,6 +1711,19 @@ void DetermineCombineNormalShuntModeWithLookahead(Train *v, TileIndex tile, Trac
 						SetBit(item.data_aux, TRSLAI_COMBINED_SHUNT);
 						return;
 					}
+				}
+			}
+
+			if (IsValidDiagDirection(v->coupling_dir) && GetCouplingApproachTarget(v) != nullptr) {
+				/* The last signal before the platform in which the train couples to another train shows the shunt aspect. */
+				bool signal_ahead = false;
+				for (size_t j = i + 1; j < count; j++) {
+					if (v->lookahead->items[j].type == TRLIT_SIGNAL) signal_ahead = true;
+				}
+				if (!signal_ahead) {
+					SetCombinedNormalShuntModeSignalToShunt(tile, trackdir);
+					SetBit(item.data_aux, TRSLAI_COMBINED_SHUNT);
+					return;
 				}
 			}
 

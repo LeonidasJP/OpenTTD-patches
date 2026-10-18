@@ -26,6 +26,7 @@
 #include "order_dest_func.h"
 #include "strings_func.h"
 #include "scope.h"
+#include "train_coupling.h"
 
 #include "table/strings.h"
 
@@ -331,6 +332,17 @@ void HandleSharingCompanyDeletion(Owner owner)
 		/* order list */
 		if (v->FirstShared() != v) continue;
 
+		RemoveVehicleOrdersIf(v, [&](const Order *o) {
+			if (o->GetType() == OT_GOTO_DEPOT && (o->GetDepotActionType() & ODATFB_NEAREST_DEPOT) != 0) return false;
+			return !OrderDestinationIsAllowed(o, v, owner);
+		});
+	}
+
+	/* The heads of passive trains in coupled combinations keep their own order list. */
+	for (const auto &it : _train_couplings) {
+		Train *v = Train::GetIfValid(it.second.passive_head);
+		if (v == nullptr || v->FirstShared() != v) continue;
+		si_v = v;
 		RemoveVehicleOrdersIf(v, [&](const Order *o) {
 			if (o->GetType() == OT_GOTO_DEPOT && (o->GetDepotActionType() & ODATFB_NEAREST_DEPOT) != 0) return false;
 			return !OrderDestinationIsAllowed(o, v, owner);

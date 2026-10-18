@@ -415,6 +415,46 @@ static bool ConCoupleTrains(std::span<std::string_view> argv)
 }
 
 /**
+ * Let a train drive into the platform of a waiting train to couple to it.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCoupleApproach(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3 || argv.size() > 4) {
+		IConsolePrint(CC_HELP, "Let a train drive into the platform of a waiting train and couple to it. Usage: 'couple_approach <arriving train number> <waiting train number|none> [arriving|waiting]'.");
+		IConsolePrint(CC_HELP, "The arriving train must have an order to go to the station of the waiting train. The last argument selects which train leads the combination, the default is the waiting train.");
+		return true;
+	}
+
+	Train *arriving = FindLocalTrainByUnitNumber(argv[1]);
+	Train *waiting = (argv[2] == "none") ? nullptr : FindLocalTrainByUnitNumber(argv[2]);
+	if (arriving == nullptr || (waiting == nullptr && argv[2] != "none")) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	bool arriving_leads = false;
+	if (argv.size() == 4) {
+		if (argv[3] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[3] != "waiting") {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	const VehicleID target = waiting != nullptr ? waiting->index : VehicleID::Invalid();
+	CommandCost test = Command<Commands::SetTrainCouplingTarget>::Do(DoCommandFlags{}, arriving->index, target, arriving_leads);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't set coupling target: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::SetTrainCouplingTarget>::Post(STR_ERROR_CAN_T_COUPLE_TRAINS, arriving->tile, arriving->index, target, arriving_leads);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "couple_approach: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
  * Split a combination of coupled trains.
  * @copydoc IConsoleCmdProc
  */
@@ -490,6 +530,9 @@ static bool ConListTrainCouplings(std::span<std::string_view> argv)
 		return true;
 	}
 
+	IConsolePrint(CC_DEFAULT, "Braking model: {}, coupling speed: {}, final coupling speed: {}",
+			_settings_game.vehicle.train_braking_model == TBM_REALISTIC ? "realistic" : "original",
+			_settings_game.vehicle.train_coupling_speed, _settings_game.vehicle.train_coupling_final_speed);
 	for (const Train *t : Train::IterateFrontOnly()) {
 		if (!t->IsFrontEngine()) continue;
 		uint count = 0;
@@ -500,6 +543,13 @@ static bool ConListTrainCouplings(std::span<std::string_view> argv)
 				t->cur_speed, t->current_order.GetType(), t->current_order.GetDestination().value, t->cur_real_order_index,
 				t->vehicle_flags.Test(VehicleFlag::PathfinderLost) ? "yes" : "no", t->IsDrivingBackwards() ? "yes" : "no",
 				t->vehstatus.Test(VehState::Stopped) ? "yes" : "no", IsTrainCoupled(t) ? "yes" : "no");
+		if (t->coupling_target != VehicleID::Invalid()) {
+			std::optional<int> dist = IsCouplingApproachPlatformTile(t, mf->tile) ? GetCouplingStopDistance(t) : std::nullopt;
+			IConsolePrint(CC_DEFAULT, "  approaching {} to couple: valid {}, dir {}, speed limit {}, arriving leads {}, distance {}",
+					t->coupling_target, GetCouplingApproachTarget(t) != nullptr ? "yes" : "no", to_underlying(t->coupling_dir),
+					t->flags.Test(VehicleRailFlag::CouplingSpeedLimit) ? "yes" : "no", t->flags.Test(VehicleRailFlag::CouplingArrivingLeads) ? "yes" : "no",
+					dist.has_value() ? *dist : -1);
+		}
 	}
 	for (const auto &it : _train_couplings) {
 		const TrainCoupling &tc = it.second;
@@ -4628,6 +4678,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("resetengines",            ConResetEngines,     ConHookNoNetwork);
 	IConsole::CmdRegister("couple_trains",           ConCoupleTrains);
 	IConsole::CmdRegister("split_train",             ConSplitTrain);
+	IConsole::CmdRegister("couple_approach",         ConCoupleApproach);
 	IConsole::CmdRegister("cut_train",               ConCutTrain);
 	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
