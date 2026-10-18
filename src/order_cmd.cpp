@@ -1414,6 +1414,11 @@ static CommandCost CmdInsertOrderIntl(DoCommandFlags flags, Vehicle *v, VehicleO
 	if (v->GetNumOrders() >= MAX_VEH_ORDER_ID) return CommandCost(STR_ERROR_TOO_MANY_ORDERS);
 	if (v->orders == nullptr && !OrderList::CanAllocateItem()) return CommandCost(STR_ERROR_NO_MORE_SPACE_FOR_ORDERS);
 
+	if (new_order.GetCouplingMode() == OrderCouplingMode::Couple) {
+		if (v->type != VehicleType::Train) return CMD_ERROR;
+		if (!IsCouplingOrderSequenceValid(v->orders, sel_ord, OrderCouplingMode::Couple, true)) return CommandCost(STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER);
+	}
+
 	if (flags.Test(DoCommandFlag::Execute)) {
 		InsertOrder(v, Order(new_order), sel_ord);
 	}
@@ -3303,6 +3308,19 @@ void CheckOrders(const Vehicle *v)
 
 		/* Do we only have 1 station in our order list? */
 		if (n_st < 2 && message == INVALID_STRING_ID) message = STR_NEWS_VEHICLE_HAS_TOO_FEW_ORDERS;
+
+		if (message == INVALID_STRING_ID && v->type == VehicleType::Train) {
+			if (!IsCouplingOrderSequenceValid(v->orders, UINT_MAX, OrderCouplingMode::None)) {
+				message = STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE;
+			} else {
+				for (const Order *order : v->Orders()) {
+					if (order->GetCouplingMode() == OrderCouplingMode::Couple && !IsCouplingFilterDefined(order)) {
+						message = STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED;
+						break;
+					}
+				}
+			}
+		}
 
 #ifdef WITH_ASSERT
 		if (v->orders != nullptr) v->orders->DebugCheckSanity();
