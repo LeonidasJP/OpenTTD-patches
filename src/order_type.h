@@ -222,6 +222,7 @@ DECLARE_ENUM_AS_BIT_SET(OrderDepotActionFlags)
  */
 enum class OrderDepotExtraFlag : uint8_t {
 	Specific            = 0, ///< This order is for a specific depot.
+	CoupledAllowed      = 1, ///< A coupled combination may stop in the depot without a news message, see train_coupling.h.
 };
 using OrderDepotExtraFlags = EnumBitSet<OrderDepotExtraFlag, uint8_t>;
 
@@ -323,6 +324,7 @@ enum ModifyOrderFlags : uint8_t {
 	MOF_COUPLING_LEADER, ///< Passes whether the arriving train leads the combination.
 	MOF_COUPLING_FILTER, ///< Passes an OrderCouplingFilter.
 	MOF_COUPLING_FILTER_ID, ///< Passes the GroupID or OrderListID of the coupling filter.
+	MOF_DEPOT_COUPLED_ALLOWED, ///< Passes whether a coupled combination may stop in the depot.
 	MOF_END
 };
 

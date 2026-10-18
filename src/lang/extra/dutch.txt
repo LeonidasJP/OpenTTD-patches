@@ -144,6 +144,13 @@ STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[koppele
 STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[koppelen: orders van {VEHICLE}{STRING}]
 STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[koppelen: {PUSH_COLOUR}{RED}onbepaald{POP_COLOUR}{STRING}]
 STR_ORDER_COUPLING_ARRIVING_LEADS                               :, aankomende trein leidt
+STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Gekoppelde combinatie mag in depot stoppen
+STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[gekoppeld toegestaan]
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Waarschuwing: een gekoppelde trein gebruikt deze orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}De gekoppelde combinatie stopt in het depot. Zet "Gekoppelde combinatie mag in depot stoppen" aan om deze waarschuwing te voorkomen
+STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
+STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Gekoppelde combinatie naar depot sturen
+STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}Deze trein is gekoppeld aan een andere trein. De gekoppelde combinatie naar een depot sturen om daar te stoppen?
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :De maximaal toegestane snelheid voor treinen die een bezet perron oprijden om aan een andere trein te koppelen, vanaf het laatste sein voor het perron
 STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Maximumsnelheid laatste nadering bij koppelen: {STRING2}

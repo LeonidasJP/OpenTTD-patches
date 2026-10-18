@@ -46,6 +46,9 @@
 
 #include "widgets/order_widget.h"
 
+#include "train.h"
+#include "train_coupling.h"
+
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -1009,6 +1012,10 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 			if (order->GetDepotActionType() & ODATFB_UNBUNCH) {
 				AppendStringInPlace(line, STR_ORDER_WAIT_TO_UNBUNCH);
 			}
+
+			if (!timetable && order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) {
+				AppendStringInPlace(line, STR_ORDER_DEPOT_COUPLED_ALLOWED);
+			}
 			break;
 
 		case OT_GOTO_WAYPOINT: {
@@ -1850,7 +1857,21 @@ private:
 			if (order == nullptr) return;
 			i = (order->GetDepotOrderType().Test(OrderDepotTypeFlag::Service)) ? DA_ALWAYS_GO : DA_SERVICE;
 		}
+		if (i == DA_STOP || i == DA_SELL) {
+			const Order *order = this->vehicle->GetOrder(sel_ord);
+			if (order != nullptr && !order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) this->WarnCoupledDepotStop();
+		}
 		this->ModifyOrder(sel_ord, MOF_DEPOT_ACTION, i);
+	}
+
+	/**
+	 * Warn that a depot order will make a coupled combination stop in the depot.
+	 * The order is changed anyway.
+	 */
+	void WarnCoupledDepotStop()
+	{
+		if (!IsOrderListUsedByCombination(this->vehicle)) return;
+		ShowErrorMessage(GetEncodedString(STR_WARNING_TRAIN_COUPLING_DEPOT_STOP), GetEncodedString(STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL), WarningLevel::Warning);
 	}
 
 	/**
@@ -3172,6 +3193,11 @@ public:
 					}
 				}
 
+				if (this->vehicle->type == VehicleType::Train && order->IsType(OT_GOTO_DEPOT)) {
+					list.push_back(MakeDropDownListDividerItem());
+					list.push_back(MakeDropDownListCheckedItem(order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed), STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU, 0x800, false));
+				}
+
 				if (this->vehicle->type == VehicleType::Road && (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT))) {
 					const DiagDirection dir = order->GetRoadVehTravelDirection();
 					if (_settings_client.gui.show_adv_load_mode_features || dir != DiagDirection::Invalid) {
@@ -4018,6 +4044,15 @@ public:
 				}
 				if (index == 0x600 || index == 0x601) {
 					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_LEADER, index & 0xFF);
+					break;
+				}
+				if (index == 0x800) {
+					const VehicleOrderID sel = this->OrderGetSel();
+					const Order *order = this->vehicle->GetOrder(sel);
+					if (order == nullptr) break;
+					const bool allowed = !order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed);
+					if (!allowed && (order->GetDepotActionType() & ODATFB_HALT) != 0) this->WarnCoupledDepotStop();
+					this->ModifyOrder(sel, MOF_DEPOT_COUPLED_ALLOWED, allowed ? 1 : 0);
 					break;
 				}
 				if (index >= 0x700 && index < 0x700 + to_underlying(OrderCouplingFilter::End)) {
