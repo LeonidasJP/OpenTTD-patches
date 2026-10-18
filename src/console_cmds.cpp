@@ -1,4 +1,4 @@
-﻿/*
+/*
  * This file is part of OpenTTD.
  * OpenTTD is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 2.
  * OpenTTD is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -78,6 +78,9 @@
 #include "train_coupling.h"
 #include "train_coupling_cmd.h"
 #include "vehicle_cmd.h"
+#include "order_cmd.h"
+#include "timetable_cmd.h"
+#include "order_base.h"
 #include "pbs.h"
 #include "station_map.h"
 #include "rail_map.h"
@@ -460,6 +463,130 @@ static bool ConCoupleApproach(std::span<std::string_view> argv)
 }
 
 /**
+ * Set the coupling action of a station order.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCouplingOrder(std::span<std::string_view> argv)
+{
+	if (argv.size() < 4) {
+		IConsolePrint(CC_HELP, "Set the coupling action of a station order. Usage: 'coupling_order <train number> <order number> <none|couple|split> [arriving|waiting] [any|group <group id>|orderlist <train number>]'.");
+		IConsolePrint(CC_HELP, "Order numbers start at 1. 'arriving' or 'waiting' selects which train leads when coupling, the default is the waiting train.");
+		return true;
+	}
+
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders()) {
+		IConsolePrint(CC_ERROR, "Train or order not found.");
+		return true;
+	}
+	const VehicleOrderID sel_ord = static_cast<VehicleOrderID>(*order_number - 1);
+
+	OrderCouplingMode mode;
+	if (argv[3] == "none") {
+		mode = OrderCouplingMode::None;
+	} else if (argv[3] == "couple") {
+		mode = OrderCouplingMode::Couple;
+	} else if (argv[3] == "split") {
+		mode = OrderCouplingMode::Split;
+	} else {
+		return false;
+	}
+
+	bool arriving_leads = false;
+	OrderCouplingFilter filter = OrderCouplingFilter::Any;
+	uint16_t filter_id = 0;
+	for (size_t i = 4; i < argv.size(); i++) {
+		if (argv[i] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[i] == "waiting") {
+			arriving_leads = false;
+		} else if (argv[i] == "any") {
+			filter = OrderCouplingFilter::Any;
+		} else if (argv[i] == "group" && i + 1 < argv.size()) {
+			auto id = ParseType<uint16_t>(argv[++i]);
+			if (!id.has_value()) return false;
+			filter = OrderCouplingFilter::Group;
+			filter_id = *id;
+		} else if (argv[i] == "orderlist" && i + 1 < argv.size()) {
+			Train *other = FindLocalTrainByUnitNumber(argv[++i]);
+			if (other == nullptr || other->orders == nullptr) {
+				IConsolePrint(CC_ERROR, "Train for order list not found.");
+				return true;
+			}
+			filter = OrderCouplingFilter::OrderList;
+			filter_id = other->orders->index.base();
+		} else {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	auto modify = [&](ModifyOrderFlags mof, uint16_t data) -> bool {
+		CommandCost test = Command<Commands::ModifyOrder>::Do(DoCommandFlags{}, t->index, sel_ord, mof, data, INVALID_CARGO, std::string{});
+		if (test.Failed()) {
+			IConsolePrint(CC_ERROR, "Can't modify order: {}", GetString(test.GetErrorMessage()));
+			return false;
+		}
+		return Command<Commands::ModifyOrder>::Post(STR_ERROR_CAN_T_MODIFY_THIS_ORDER, t->tile, t->index, sel_ord, mof, data, INVALID_CARGO, std::string{});
+	};
+	if (!modify(MOF_COUPLING_MODE, to_underlying(mode))) return true;
+	if (mode == OrderCouplingMode::Couple) {
+		if (!modify(MOF_COUPLING_LEADER, arriving_leads ? 1 : 0)) return true;
+		if (!modify(MOF_COUPLING_FILTER, to_underlying(filter))) return true;
+		if (filter != OrderCouplingFilter::Any && !modify(MOF_COUPLING_FILTER_ID, filter_id)) return true;
+	}
+	IConsolePrint(CC_DEFAULT, "coupling_order: done");
+	return true;
+}
+
+/**
+ * Debug: modify an order of a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConModifyOrder(std::span<std::string_view> argv)
+{
+	if (argv.size() != 5) {
+		IConsolePrint(CC_HELP, "Debug: modify an order of a train. Usage: 'modify_order <train number> <order number> <modify order flag number> <data>'.");
+		return true;
+	}
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	auto mof = ParseType<uint>(argv[3]);
+	auto data = ParseType<uint16_t>(argv[4]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders() || !mof.has_value() || *mof >= MOF_END || !data.has_value()) return false;
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::ModifyOrder>::Do(DoCommandFlags{}, t->index, static_cast<VehicleOrderID>(*order_number - 1), static_cast<ModifyOrderFlags>(*mof), *data, INVALID_CARGO, std::string{});
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't modify order: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	Command<Commands::ModifyOrder>::Post(STR_ERROR_CAN_T_MODIFY_THIS_ORDER, t->tile, t->index, static_cast<VehicleOrderID>(*order_number - 1), static_cast<ModifyOrderFlags>(*mof), *data, INVALID_CARGO, std::string{});
+	return true;
+}
+
+/**
+ * Debug: set the timetabled wait time of an order of a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSetWaitTime(std::span<std::string_view> argv)
+{
+	if (argv.size() != 4) {
+		IConsolePrint(CC_HELP, "Debug: set the timetabled wait time of an order. Usage: 'set_wait_time <train number> <order number> <ticks>'.");
+		return true;
+	}
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	auto ticks = ParseType<uint32_t>(argv[3]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders() || !ticks.has_value()) return false;
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	Command<Commands::ChangeTimetable>::Post(STR_ERROR_CAN_T_TIMETABLE_VEHICLE, t->index, static_cast<VehicleOrderID>(*order_number - 1), MTF_WAIT_TIME, *ticks, ModifyTimetableCtrlFlags{});
+	return true;
+}
+
+/**
  * Split a combination of coupled trains.
  * @copydoc IConsoleCmdProc
  */
@@ -736,7 +863,8 @@ static bool ConListTrainCouplings(std::span<std::string_view> argv)
 				} else if (o->IsType(OT_GOTO_DEPOT)) {
 					dest = fmt::format("depot {}", o->GetDestination().value);
 				}
-				IConsolePrint(CC_DEFAULT, "  order {}: type {} {} flags 0x{:X} stop location {}{}", i, o->GetType(), dest, o->GetRawFlags(), to_underlying(o->GetStopLocation()), i == t->cur_real_order_index ? " <- current" : "");
+				IConsolePrint(CC_DEFAULT, "  order {}: type {} {} flags 0x{:X} stop location {} coupling {} leader {} filter {}/{}{}", i + 1, o->GetType(), dest, o->GetRawFlags(), to_underlying(o->GetStopLocation()),
+						to_underlying(o->GetCouplingMode()), o->IsCouplingArrivingLeads() ? "arriving" : "waiting", to_underlying(o->GetCouplingFilter()), o->GetCouplingFilterID(), i == t->cur_real_order_index ? " <- current" : "");
 				i++;
 			}
 		}
@@ -4876,6 +5004,9 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("couple_trains",           ConCoupleTrains);
 	IConsole::CmdRegister("split_train",             ConSplitTrain);
 	IConsole::CmdRegister("couple_approach",         ConCoupleApproach);
+	IConsole::CmdRegister("coupling_order",          ConCouplingOrder);
+	IConsole::CmdRegister("modify_order",            ConModifyOrder);
+	IConsole::CmdRegister("set_wait_time",           ConSetWaitTime);
 	IConsole::CmdRegister("cut_train",               ConCutTrain);
 	IConsole::CmdRegister("start_stop_train",        ConStartStopTrain);
 	IConsole::CmdRegister("on_train_loading",        ConOnTrainLoading);

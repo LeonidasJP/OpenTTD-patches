@@ -163,6 +163,26 @@ enum OrderNonStopFlags : uint8_t {
 };
 
 /**
+ * Coupling action of a train at a station order, see train_coupling.h.
+ */
+enum class OrderCouplingMode : uint8_t {
+	None   = 0, ///< No coupling or splitting.
+	Couple = 1, ///< Couple to another train at this station, or wait for another train to couple.
+	Split  = 2, ///< Split from the combination at this station.
+	End,        ///< End marker.
+};
+
+/**
+ * Which trains may be coupled to at a station order with #OrderCouplingMode::Couple.
+ */
+enum class OrderCouplingFilter : uint8_t {
+	Any       = 0, ///< Any train.
+	Group     = 1, ///< Trains of a group.
+	OrderList = 2, ///< Trains with a specific (shared) order list.
+	End,           ///< End marker.
+};
+
+/**
  * Where to stop the trains.
  */
 enum class OrderStopLocation : uint8_t {
@@ -299,6 +319,10 @@ enum ModifyOrderFlags : uint8_t {
 	MOF_COLOUR,          ///< Change the colour value
 	MOF_LABEL_TEXT,      ///< Change the label text value
 	MOF_DEPARTURES_SUBTYPE, ///< Change the label departures subtype
+	MOF_COUPLING_MODE,   ///< Passes an OrderCouplingMode.
+	MOF_COUPLING_LEADER, ///< Passes whether the arriving train leads the combination.
+	MOF_COUPLING_FILTER, ///< Passes an OrderCouplingFilter.
+	MOF_COUPLING_FILTER_ID, ///< Passes the GroupID or OrderListID of the coupling filter.
 	MOF_END
 };
 

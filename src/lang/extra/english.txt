@@ -2568,6 +2568,7 @@ STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... trai
 STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... train is already coupled to another train
 STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... train is not coupled to another train
 STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... coupled trains can only be refitted or started/stopped
+STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... a split order is required before another couple order
 
 STR_WARNING_PASSWORD_SECURITY                                   :{YELLOW}Warning: Server administrators may be able to read any text entered here.
 STR_NETWORK_NEED_COMPANY_PASSWORD_CAPTION                       :{WHITE}Company is protected. Enter password

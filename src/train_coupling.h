@@ -15,6 +15,7 @@
 #include "vehicle_type.h"
 #include "direction_type.h"
 #include "tile_type.h"
+#include "station_type.h"
 #include <optional>
 #include <vector>
 #include "3rdparty/cpp-btree/btree_map.h"
@@ -56,6 +57,14 @@ Train *SplitCombination(Train *head);
 void OnTrainCouplingVehicleDeleted(Train *v);
 void ValidateTrainCouplings();
 std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles();
+
+struct OrderList;
+struct Order;
+enum class OrderCouplingMode : uint8_t;
+bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode);
+const Order *GetCurrentCouplingOrder(const Train *v);
+void UpdateCouplingApproachFromOrders(Train *v);
+void OnCombinationEnteredStation(Train *head, StationID station);
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);

@@ -44,6 +44,7 @@
 #include "timetable_cmd.h"
 #include "train_cmd.h"
 #include "train_coupling.h"
+#include "group.h"
 #include "train.h"
 
 #include "table/strings.h"
@@ -1968,7 +1969,8 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 	} else {
 		switch (order->GetType()) {
 			case OT_GOTO_STATION:
-				if (mof != MOF_NON_STOP && mof != MOF_STOP_LOCATION && mof != MOF_UNLOAD && mof != MOF_LOAD && mof != MOF_CARGO_TYPE_UNLOAD && mof != MOF_CARGO_TYPE_LOAD && mof != MOF_RV_TRAVEL_DIR) return CMD_ERROR;
+				if (mof != MOF_NON_STOP && mof != MOF_STOP_LOCATION && mof != MOF_UNLOAD && mof != MOF_LOAD && mof != MOF_CARGO_TYPE_UNLOAD && mof != MOF_CARGO_TYPE_LOAD && mof != MOF_RV_TRAVEL_DIR &&
+						mof != MOF_COUPLING_MODE && mof != MOF_COUPLING_LEADER && mof != MOF_COUPLING_FILTER && mof != MOF_COUPLING_FILTER_ID) return CMD_ERROR;
 				break;
 
 			case OT_GOTO_DEPOT:
@@ -2024,6 +2026,42 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_STOP_LOCATION:
 			if (v->type != VehicleType::Train) return CMD_ERROR;
 			if (data >= to_underlying(OrderStopLocation::End)) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_MODE:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data >= to_underlying(OrderCouplingMode::End)) return CMD_ERROR;
+			if (data == to_underlying(OrderCouplingMode::Couple) && !IsCouplingOrderSequenceValid(v->orders, sel_ord, OrderCouplingMode::Couple)) {
+				return CommandCost(STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER);
+			}
+			break;
+
+		case MOF_COUPLING_LEADER:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data > 1) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_FILTER:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data >= to_underlying(OrderCouplingFilter::End)) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_FILTER_ID:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			switch (order->GetCouplingFilter()) {
+				case OrderCouplingFilter::Group: {
+					const Group *g = Group::GetIfValid(GroupID(data));
+					if (g == nullptr || g->owner != v->owner || g->vehicle_type != VehicleType::Train) return CMD_ERROR;
+					break;
+				}
+				case OrderCouplingFilter::OrderList: {
+					const OrderList *ol = OrderList::GetIfValid(OrderListID(data));
+					if (ol == nullptr || ol->GetFirstSharedVehicle() == nullptr || ol->GetFirstSharedVehicle()->owner != v->owner || ol->GetFirstSharedVehicle()->type != VehicleType::Train) return CMD_ERROR;
+					break;
+				}
+				default:
+					return CMD_ERROR;
+			}
 			break;
 
 		case MOF_CARGO_TYPE_UNLOAD:
@@ -2350,6 +2388,23 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 
 			case MOF_STOP_LOCATION:
 				order->SetStopLocation(static_cast<OrderStopLocation>(data));
+				break;
+
+			case MOF_COUPLING_MODE:
+				order->SetCouplingMode(static_cast<OrderCouplingMode>(data));
+				break;
+
+			case MOF_COUPLING_LEADER:
+				order->SetCouplingArrivingLeads(data != 0);
+				break;
+
+			case MOF_COUPLING_FILTER:
+				order->SetCouplingFilter(static_cast<OrderCouplingFilter>(data));
+				order->SetCouplingFilterID(0);
+				break;
+
+			case MOF_COUPLING_FILTER_ID:
+				order->SetCouplingFilterID(data);
 				break;
 
 			case MOF_UNLOAD:
