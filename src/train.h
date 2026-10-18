@@ -47,6 +47,8 @@ enum class VehicleRailFlag : uint8_t {
 	ConsistSpeedReduction     = 20, ///< One or more vehicles in this consist may be in a depot or on a bridge (may be false positive but not false negative).
 	PendingSpeedRestriction   = 21, ///< This vehicle has one or more pending speed restriction changes.
 	SpeedAdaptationExempt     = 22, ///< This vehicle is exempt from train speed adaptation.
+	CoupledCombination        = 23, ///< This train is a combination of two coupled trains (head only), see TrainCoupling.
+	CoupledPassiveHead        = 24, ///< This vehicle is the head of the passive train in a coupled combination, see TrainCoupling.
 };
 using VehicleRailFlags = EnumBitSet<VehicleRailFlag, uint32_t>;
 

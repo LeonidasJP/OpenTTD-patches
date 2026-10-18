@@ -689,6 +689,9 @@ enum class Commands : uint8_t {
 	DepotMassSell,                          ///< sell all vehicles which are in a given depot
 	DepotMassAutoreplace,                   ///< force the autoreplace to take action in a given depot
 	SetTrainSpeedRestriction,               ///< manually set train speed restriction
+	CoupleTrains,                           ///< couple two trains in a station
+	SplitCoupledTrain,                      ///< split a combination of coupled trains
+	CutTrain,                               ///< debug: cut a train into two trains outside a depot
 
 	CreateGroup,                            ///< create a new group
 	DeleteGroup,                            ///< delete a group

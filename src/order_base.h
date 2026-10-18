@@ -1364,6 +1364,12 @@ public:
 	inline Vehicle *GetFirstSharedVehicle() const { return this->first_shared; }
 
 	/**
+	 * Replace the first vehicle of the shared vehicle chain, without changing the number of vehicles.
+	 * @param v The new first vehicle of the chain.
+	 */
+	inline void ReplaceFirstSharedVehicle(Vehicle *v) { this->first_shared = v; }
+
+	/**
 	 * Return the number of vehicles that share this orders list
 	 * @return the count of vehicles that use this shared orders list
 	 */
