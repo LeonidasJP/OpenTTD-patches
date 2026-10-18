@@ -154,12 +154,16 @@ private:
 
 			const DiagDirection travel_dir = ReverseDiagDir(dir);
 			const TileIndexDiff forward = TileOffsByDiagDir(travel_dir);
+			std::vector<TileIndex> reserved_tiles;
 			for (TileIndex t = entry; IsCompatibleTrainStationTile(t, start); t = TileAdd(t, forward)) {
 				if (HasStationReservation(t)) {
 					if (this->IsCouplingTargetOnTile(t)) break;
 
+					/* The train to couple to may have reserved the complete platform when it arrived. */
+					if (GetTrainForReservation(t, GetRailStationTrack(t)) == Train::GetIfValid(v->coupling_target)) continue;
+
 					/* Reserved by another train, undo our part of the platform reservation. */
-					for (TileIndex u = entry; u != t; u = TileAdd(u, forward)) {
+					for (TileIndex u : reserved_tiles) {
 						SetRailStationReservation(u, false);
 						MarkTileDirtyByTile(u, VMDF_NOT_MAP_MODE);
 					}
@@ -167,6 +171,7 @@ private:
 				}
 				SetRailStationReservation(t, true);
 				MarkTileDirtyByTile(t, VMDF_NOT_MAP_MODE);
+				reserved_tiles.push_back(t);
 			}
 			v->coupling_dir = travel_dir;
 			return true;

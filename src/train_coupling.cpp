@@ -16,6 +16,7 @@
 #include "company_func.h"
 #include "economy_base.h"
 #include "group.h"
+#include "station_base.h"
 #include "newgrf_debug.h"
 #include "order_backup.h"
 #include "order_base.h"
@@ -419,12 +420,16 @@ static void PrepareDepartureAfterSplit(Train *t)
 	const Train *moving_front = t->GetMovingFront();
 	if (IsRailStationTile(moving_front->tile)) {
 		const StationID station = GetStationIndex(moving_front->tile);
-
-		/* The train visited this station while coupled, continue with the next order. */
-		const Order *order = t->GetOrder(t->cur_implicit_order_index);
-		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) t->IncrementImplicitOrderIndex();
-
 		t->last_station_visited = station;
+
+		/* When this station is the current order of the train, load here according to that order. */
+		const Order *order = t->GetOrder(t->cur_real_order_index);
+		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) {
+			t->current_order = *order;
+			t->BeginLoading();
+			return;
+		}
+
 		t->current_order.MakeLeaveStation();
 		t->current_order.SetDestination(station);
 		t->flags.Set(VehicleRailFlag::LeavingStation);
@@ -498,6 +503,8 @@ Train *SplitCombination(Train *head)
 	Train *leader = (passive == head) ? second : head;
 	passive->vehstatus.Set(VehState::Stopped, leader->vehstatus.Test(VehState::Stopped));
 	PrepareDepartureAfterSplit(passive);
+	passive->flags.Set(VehicleRailFlag::SplitOffLast);
+	leader->flags.Reset(VehicleRailFlag::SplitOffLast);
 
 	/* Neither train may drive into the other until they have moved apart. */
 	head->split_partner = second->index;
@@ -563,6 +570,65 @@ std::vector<Vehicle *> GetFrontAndCoupledPassiveVehicles()
 		if (passive != nullptr) result.push_back(passive);
 	}
 	return result;
+}
+
+/**
+ * Check that an order list never has two couple orders without a split order in between, which would couple a combination again.
+ * @param list The order list.
+ * @param index The index of the order which gets a new coupling mode.
+ * @param new_mode The new coupling mode of that order.
+ * @return True if the sequence of coupling orders is valid.
+ */
+bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode)
+{
+	if (list == nullptr) return true;
+	const uint count = list->GetNumOrders();
+	if (count == 0) return true;
+
+	/* A single couple order is always valid. */
+	uint couple_orders = 0;
+	for (uint idx = 0; idx < count; idx++) {
+		const Order *o = list->GetOrderAt(idx);
+		if (o->IsType(OT_GOTO_STATION) && ((idx == index) ? new_mode : o->GetCouplingMode()) == OrderCouplingMode::Couple) couple_orders++;
+	}
+	if (couple_orders <= 1) return true;
+
+	/* Walk the (cyclic) order list twice, the state is only reliable during the second pass. */
+	bool coupled = false;
+	for (uint i = 0; i < 2 * count; i++) {
+		const uint idx = i % count;
+		const Order *o = list->GetOrderAt(idx);
+		const OrderCouplingMode mode = (idx == index) ? new_mode : o->GetCouplingMode();
+		if (!o->IsType(OT_GOTO_STATION)) continue;
+		if (mode == OrderCouplingMode::Couple) {
+			if (coupled && i >= count) return false;
+			coupled = true;
+		} else if (mode == OrderCouplingMode::Split) {
+			coupled = false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Get the order of a train for the station it is heading to or loading at, if it is a coupling or splitting order.
+ * @param v The train.
+ * @return The order, or nullptr if the current order is not a coupling or splitting order.
+ */
+const Order *GetCurrentCouplingOrder(const Train *v)
+{
+	StationID station;
+	if (v->current_order.IsType(OT_GOTO_STATION)) {
+		station = v->current_order.GetDestination().ToStationID();
+	} else if (v->current_order.IsAnyLoadingType()) {
+		station = v->last_station_visited;
+	} else {
+		return nullptr;
+	}
+	const Order *order = v->GetOrder(v->cur_real_order_index);
+	if (order == nullptr || !order->IsType(OT_GOTO_STATION) || order->GetDestination() != station) return nullptr;
+	if (order->GetCouplingMode() == OrderCouplingMode::None) return nullptr;
+	return order;
 }
 
 /**
@@ -728,7 +794,8 @@ std::optional<int> GetCouplingStopDistance(const Train *v)
 bool IsTrainBeingApproachedForCoupling(const Train *target)
 {
 	for (const Train *t : Train::IterateFrontOnly()) {
-		if (t->coupling_target == target->index && t->IsFrontEngine() && GetCouplingApproachTarget(t) == target) return true;
+		/* Only hold the waiting train once the approaching train reserved its path into the platform. */
+		if (t->coupling_target == target->index && t->IsFrontEngine() && IsValidDiagDirection(t->coupling_dir) && GetCouplingApproachTarget(t) == target) return true;
 	}
 	return false;
 }
@@ -741,8 +808,142 @@ void ClearCouplingApproach(Train *v)
 {
 	v->coupling_target = VehicleID::Invalid();
 	v->coupling_dir = DiagDirection::Invalid;
-	v->flags.Reset({VehicleRailFlag::CouplingArrivingLeads, VehicleRailFlag::CouplingSpeedLimit});
+	v->flags.Reset({VehicleRailFlag::CouplingArrivingLeads, VehicleRailFlag::CouplingSpeedLimit, VehicleRailFlag::CouplingFromOrders});
 	SetWindowDirty(WindowClass::VehicleView, v->index);
+}
+
+/**
+ * A waiting train became the target of a train which drives to it to couple.
+ * Free the path reservation in front of the waiting train, which may block the platform for the approaching train.
+ * @param target The waiting train.
+ */
+static void ReleaseCouplingTargetReservation(Train *target)
+{
+	if (target->cur_speed != 0 || !target->current_order.IsAnyLoadingType()) return;
+	FreeTrainTrackReservation(target);
+	target->lookahead.reset();
+	target->ReserveTrackUnderConsist();
+}
+
+/**
+ * Does a train match the coupling filter of a couple order?
+ * @param order The couple order.
+ * @param t The train.
+ * @return True if the train may be coupled to.
+ */
+static bool DoesTrainMatchCouplingFilter(const Order *order, const Train *t)
+{
+	switch (order->GetCouplingFilter()) {
+		case OrderCouplingFilter::Group:
+			return GroupIsInGroup(t->group_id, GroupID(order->GetCouplingFilterID()));
+		case OrderCouplingFilter::OrderList:
+			return t->orders != nullptr && t->orders->index == OrderListID(order->GetCouplingFilterID());
+		default:
+			return true;
+	}
+}
+
+/**
+ * Find a partner to couple to for a train with a couple order, and drive to it.
+ * The partner must be waiting at the station of the order, with a couple order for that station itself, and both trains must match each other's coupling filter.
+ * @param v The train.
+ */
+void UpdateCouplingApproachFromOrders(Train *v)
+{
+	const Order *order = v->current_order.IsType(OT_GOTO_STATION) ? GetCurrentCouplingOrder(v) : nullptr;
+	const bool couple = order != nullptr && order->GetCouplingMode() == OrderCouplingMode::Couple && !IsTrainCoupled(v);
+
+	if (v->flags.Test(VehicleRailFlag::CouplingFromOrders)) {
+		/* Stop approaching when the order changed, or the partner is no longer available. */
+		if (!couple || GetCouplingApproachTarget(v) == nullptr) ClearCouplingApproach(v);
+	}
+	if (!couple || v->coupling_target != VehicleID::Invalid()) return;
+
+	/* Only search for a partner every few ticks. */
+	if ((v->tick_counter & 7) != 0) return;
+
+	const Station *st = Station::GetIfValid(order->GetDestination().ToStationID());
+	if (st == nullptr) return;
+	for (const Vehicle *u : st->loading_vehicles) {
+		if (u->type != VehicleType::Train || u == v || !u->IsPrimaryVehicle() || u->owner != v->owner) continue;
+		const Train *partner = Train::From(u);
+		if (IsTrainCoupled(partner)) continue;
+		const Order *partner_order = GetCurrentCouplingOrder(partner);
+		if (partner_order == nullptr || partner_order->GetCouplingMode() != OrderCouplingMode::Couple) continue;
+		if (!DoesTrainMatchCouplingFilter(order, partner) || !DoesTrainMatchCouplingFilter(partner_order, v)) continue;
+		if (IsTrainBeingApproachedForCoupling(partner)) continue;
+
+		v->coupling_target = partner->index;
+		v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, order->IsCouplingArrivingLeads());
+		v->flags.Set(VehicleRailFlag::CouplingFromOrders);
+		if (GetCouplingApproachTarget(v) == partner) {
+			ReleaseCouplingTargetReservation(Train::Get(partner->index));
+			SetWindowDirty(WindowClass::VehicleView, v->index);
+			return;
+		}
+		ClearCouplingApproach(v);
+	}
+}
+
+/** Combinations which reached a split order during the current tick. */
+static std::vector<VehicleID> _pending_train_splits;
+
+/**
+ * A combination stopped at a station: split if the order of the leading or the passive train says so,
+ * otherwise the passive train visited this station.
+ * The split is done after all vehicles have been ticked, as the train might currently be moving.
+ * @param head The head of the combination.
+ * @param station The station.
+ */
+void OnCombinationEnteredStation(Train *head, StationID station)
+{
+	Train *passive = GetCoupledPassiveHead(head);
+	if (passive == nullptr) return;
+
+	bool split = false;
+	const Order *leader_order = GetCurrentCouplingOrder(head);
+	if (leader_order != nullptr && leader_order->GetCouplingMode() == OrderCouplingMode::Split) split = true;
+
+	/* While coupled, the passive train skips its orders which are not station orders, such as depot orders. */
+	for (uint i = 0; i < passive->GetNumOrders(); i++) {
+		const Order *o = passive->GetOrder(passive->cur_real_order_index);
+		if (o == nullptr || o->IsType(OT_GOTO_STATION)) break;
+		passive->IncrementRealOrderIndex();
+	}
+
+	const Order *passive_order = passive->GetOrder(passive->cur_real_order_index);
+	if (passive_order != nullptr && passive_order->IsType(OT_GOTO_STATION) && passive_order->GetDestination() == station) {
+		if (passive_order->GetCouplingMode() == OrderCouplingMode::Split) {
+			split = true;
+		} else if (!split) {
+			/* The passive train visits this station as part of the combination. */
+			passive->last_station_visited = station;
+			passive->IncrementImplicitOrderIndex();
+		}
+	}
+
+	if (split) _pending_train_splits.push_back(head->index);
+}
+
+/** Split the combinations which reached a split order during this tick. */
+static void ProcessPendingTrainSplits()
+{
+	if (_pending_train_splits.empty()) return;
+
+	std::vector<VehicleID> pending;
+	pending.swap(_pending_train_splits);
+	for (VehicleID id : pending) {
+		Train *head = Train::GetIfValid(id);
+		if (head == nullptr || !IsTrainCoupled(head)) continue;
+		head->cur_speed = 0;
+		head->subspeed = 0;
+		CommandCost ret = CheckCanSplitCombination(head);
+		if (ret.Failed()) {
+			Debug(misc, 1, "Train split of {} failed: {}", head->index, ret.GetErrorMessage());
+			continue;
+		}
+		SplitCombination(head);
+	}
 }
 
 /** Trains which reached their coupling stop location during the current tick. */
@@ -759,9 +960,10 @@ void OnCouplingTrainEnteredStation(Train *consist)
 	_pending_train_couplings.push_back(consist->index);
 }
 
-/** Couple the trains which reached their coupling target during this tick. */
+/** Couple the trains which reached their coupling target during this tick, and split the combinations which reached a split order. */
 void ProcessPendingTrainCouplings()
 {
+	ProcessPendingTrainSplits();
 	if (_pending_train_couplings.empty()) return;
 
 	std::vector<VehicleID> pending;
@@ -900,6 +1102,8 @@ CommandCost CmdSetTrainCouplingTarget(DoCommandFlags flags, VehicleID veh_id, Ve
 		if (target_id != VehicleID::Invalid()) {
 			v->coupling_target = target_id;
 			v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, arriving_leads);
+			Train *target = GetCouplingApproachTarget(v);
+			if (target != nullptr) ReleaseCouplingTargetReservation(target);
 		}
 	}
 

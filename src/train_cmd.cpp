@@ -5179,6 +5179,7 @@ static void TrainEnterStation(Train *consist, StationID station)
 	consist->BeginLoading();
 
 	if (consist->coupling_target != VehicleID::Invalid()) OnCouplingTrainEnteredStation(consist);
+	if (IsTrainCoupled(consist)) OnCombinationEnteredStation(consist, station);
 
 	TileIndex station_tile = consist->GetStationLoadingVehicle()->tile;
 	TriggerStationRandomisation(st, station_tile, StationRandomTrigger::VehicleArrives);
@@ -6952,6 +6953,8 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 
 	/* exit if train is stopped */
 	if (consist->vehstatus.Test(VehState::Stopped) && consist->cur_speed == 0) return true;
+
+	if (!mode) UpdateCouplingApproachFromOrders(consist);
 
 	bool valid_order = !consist->current_order.IsType(OT_NOTHING) && consist->current_order.GetType() != OT_CONDITIONAL && !consist->current_order.IsSlotCounterOrder() && !consist->current_order.IsType(OT_LABEL);
 	if (ProcessOrders(consist) && CheckReverseTrain(consist)) {

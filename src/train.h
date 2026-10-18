@@ -51,6 +51,8 @@ enum class VehicleRailFlag : uint8_t {
 	CoupledPassiveHead        = 24, ///< This vehicle is the head of the passive train in a coupled combination, see TrainCoupling.
 	CouplingArrivingLeads     = 25, ///< When coupling to Train::coupling_target, this (arriving) train leads the combination.
 	CouplingSpeedLimit        = 26, ///< This train passed the last signal before coupling, the coupling speed limit applies.
+	CouplingFromOrders        = 27, ///< Train::coupling_target was set by a couple order (and not by a command).
+	SplitOffLast              = 28, ///< This train was the passive train at its last split, see OrderConditionVariable::CouplingRole.
 };
 using VehicleRailFlags = EnumBitSet<VehicleRailFlag, uint32_t>;
 
