@@ -3597,6 +3597,7 @@ void Vehicle::LeaveStation()
 	TileIndex station_tile = INVALID_TILE;
 
 	if (this->type == VehicleType::Train) {
+		OnTrainLeavingCouplingStation(Train::From(this));
 		station_tile = Train::From(this)->GetStationLoadingVehicle()->tile;
 		for (Train *v = Train::From(this); v != nullptr; v = v->Next()) {
 			v->flags.Reset({VehicleRailFlag::BeyondPlatformEnd, VehicleRailFlag::NotYetInPlatform});

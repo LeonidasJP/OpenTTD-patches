@@ -1931,6 +1931,11 @@ STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[couple:
 STR_ORDER_COUPLING_ARRIVING_LEADS                               :, arriving train leads
 STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Coupled combination allowed to stop in depot
 STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[coupled allowed]
+STR_ORDER_CONDITIONAL_COUPLING_ROLE                             :Coupling role
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED                     :Coupled to another train
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_LEADING                     :Leading a coupled combination
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_SPLIT_OFF_LAST              :Split off at last split
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Last coupling failed
 
 STR_ORDER_CONDITIONAL_UNDEFINED_STATION                         :{PUSH_COLOUR}{RED}undefined station{POP_COLOUR}
 

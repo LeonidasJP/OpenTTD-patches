@@ -146,6 +146,11 @@ STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[koppele
 STR_ORDER_COUPLING_ARRIVING_LEADS                               :, aankomende trein leidt
 STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Gekoppelde combinatie mag in depot stoppen
 STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[gekoppeld toegestaan]
+STR_ORDER_CONDITIONAL_COUPLING_ROLE                             :Koppelrol
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED                     :Gekoppeld aan een andere trein
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_LEADING                     :Leidt een gekoppelde combinatie
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_SPLIT_OFF_LAST              :Afgesplitst bij laatste splitsing
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Laatste koppeling mislukt
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Waarschuwing: een gekoppelde trein gebruikt deze orders
 STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}De gekoppelde combinatie stopt in het depot. Zet "Gekoppelde combinatie mag in depot stoppen" aan om deze waarschuwing te voorkomen
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
