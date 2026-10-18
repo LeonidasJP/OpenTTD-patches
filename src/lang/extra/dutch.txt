@@ -128,6 +128,22 @@ STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... trei
 STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... trein is niet gekoppeld aan een andere trein
 STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... gekoppelde treinen kunnen alleen omgebouwd of gestart/gestopt worden
 STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... eerst een Splitsen-order nodig voor een volgende Koppelen-order
+STR_ERROR_TRAIN_COUPLING_NO_GROUPS                              :{WHITE}... er zijn geen treingroepen
+STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... kies een eigen trein met orders
+STR_ORDER_COUPLING_MODE_NONE                                    :Niet koppelen of splitsen
+STR_ORDER_COUPLING_MODE_COUPLE                                  :Hier treinen koppelen
+STR_ORDER_COUPLING_MODE_SPLIT                                   :Hier trein splitsen
+STR_ORDER_COUPLING_LEADER_WAITING                               :Koppelen: wachtende trein leidt
+STR_ORDER_COUPLING_LEADER_ARRIVING                              :Koppelen: aankomende trein leidt
+STR_ORDER_COUPLING_FILTER_ANY                                   :Koppelen aan: elke trein
+STR_ORDER_COUPLING_FILTER_GROUP                                 :Koppelen aan: trein in groep...
+STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Koppelen aan: trein met orders van...
+STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[splitsen]
+STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[koppelen: elke trein{STRING}]
+STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[koppelen: groep {GROUP}{STRING}]
+STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[koppelen: orders van {VEHICLE}{STRING}]
+STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[koppelen: {PUSH_COLOUR}{RED}onbepaald{POP_COLOUR}{STRING}]
+STR_ORDER_COUPLING_ARRIVING_LEADS                               :, aankomende trein leidt
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :De maximaal toegestane snelheid voor treinen die een bezet perron oprijden om aan een andere trein te koppelen, vanaf het laatste sein voor het perron
 STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Maximumsnelheid laatste nadering bij koppelen: {STRING2}
