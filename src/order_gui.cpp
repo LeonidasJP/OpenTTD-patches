@@ -77,9 +77,57 @@ static const uint32_t _cargo_type_unload_order_dropdown_hidden_mask = 0x8; // 01
 
 DropDownList GetSlotDropDownList(Owner owner, TraceRestrictSlotID slot_id, int &selected, VehicleType vehtype, bool show_other_types);
 DropDownList GetSlotGroupDropDownList(Owner owner, TraceRestrictSlotGroupID slot_group_id, int &selected, VehicleType vehtype);
+DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &selected, bool include_default = true, int value_offset = 0);
 DropDownList GetCounterDropDownList(Owner owner, TraceRestrictCounterID ctr_id, int &selected);
 
 StringID GetSlotGroupWarning(TraceRestrictSlotGroupID slot_group, Owner owner);
+
+/**
+ * Append the coupling action of a station order to the order text.
+ * @param line The order text.
+ * @param order The order.
+ */
+static void AppendOrderCouplingString(format_target &line, const Order *order)
+{
+	switch (order->GetCouplingMode()) {
+		case OrderCouplingMode::Split:
+			AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT);
+			break;
+
+		case OrderCouplingMode::Couple: {
+			const StringID leader = order->IsCouplingArrivingLeads() ? STR_ORDER_COUPLING_ARRIVING_LEADS : STR_EMPTY;
+			switch (order->GetCouplingFilter()) {
+				case OrderCouplingFilter::Group: {
+					const GroupID group = GroupID(order->GetCouplingFilterID());
+					if (Group::IsValidID(group)) {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_GROUP, group, leader);
+					} else {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_UNDEFINED, leader);
+					}
+					break;
+				}
+
+				case OrderCouplingFilter::OrderList: {
+					const OrderList *list = OrderList::GetIfValid(OrderListID(order->GetCouplingFilterID()));
+					if (list != nullptr && list->GetFirstSharedVehicle() != nullptr) {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_ORDERLIST, list->GetFirstSharedVehicle()->index, leader);
+					} else {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_UNDEFINED, leader);
+					}
+					break;
+				}
+
+				default:
+					AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_ANY, leader);
+					break;
+			}
+			break;
+		}
+
+		default:
+			break;
+	}
+}
 
 static bool ModifyOrder(const Vehicle *v, VehicleOrderID order_id, ModifyOrderFlags mof, uint16_t data, bool error_msg = true)
 {
@@ -915,6 +963,7 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 						AppendStringInPlace(line, STR_ORDER_STOP_LOCATION_NEAR_END + to_underlying(order->GetStopLocation()));
 					}
 				}
+				if (v->type == VehicleType::Train) AppendOrderCouplingString(line, order);
 				if (v->type == VehicleType::Road && order->GetRoadVehTravelDirection() != DiagDirection::Invalid) {
 					line.push_back(' ');
 					AppendStringInPlace(line, STR_ORDER_RV_DIR_NE + to_underlying(order->GetRoadVehTravelDirection()));
@@ -1565,6 +1614,7 @@ private:
 		OPOS_COND_STATION,
 		OPOS_CONDITIONAL_RETARGET,
 		OPOS_DEPARTURE_VIA,
+		OPOS_COUPLING_ORDERLIST,
 		OPOS_END,
 	};
 
@@ -1755,6 +1805,7 @@ private:
 			HT_RECT,              // OPOS_COND_STATION
 			HT_NONE,              // OPOS_CONDITIONAL_RETARGET
 			HT_RECT,              // OPOS_DEPARTURE_VIA
+			HT_VEHICLE,           // OPOS_COUPLING_ORDERLIST
 		};
 		SetObjectToPlaceWnd(ANIMCURSOR_PICKSTATION, PAL_NONE, goto_place_style[type - 1], this);
 		this->goto_type = type;
@@ -2600,10 +2651,10 @@ public:
 			this->selected_order = -1; // Disable selection any selected row at a competitor order window.
 		} else {
 			this->SetWidgetLoweredState(WID_O_GOTO, this->goto_type != OPOS_NONE && this->goto_type != OPOS_COND_VIA
-					&& this->goto_type != OPOS_COND_STATION && this->goto_type != OPOS_CONDITIONAL_RETARGET);
+					&& this->goto_type != OPOS_COND_STATION && this->goto_type != OPOS_CONDITIONAL_RETARGET && this->goto_type != OPOS_COUPLING_ORDERLIST);
 			this->SetWidgetLoweredState(WID_O_COND_AUX_VIA, this->goto_type == OPOS_COND_VIA);
 			this->SetWidgetLoweredState(WID_O_COND_AUX_STATION, this->goto_type == OPOS_COND_STATION);
-			this->SetWidgetLoweredState(WID_O_MGMT_BTN, this->goto_type == OPOS_CONDITIONAL_RETARGET);
+			this->SetWidgetLoweredState(WID_O_MGMT_BTN, this->goto_type == OPOS_CONDITIONAL_RETARGET || this->goto_type == OPOS_COUPLING_ORDERLIST);
 		}
 		this->DrawWidgets();
 	}
@@ -3102,6 +3153,23 @@ public:
 						}
 						list.push_back(MakeDropDownListCheckedItem(osl == OrderStopLocation::Through, STR_ORDER_STOP_LOCATION_THROUGH, 0x200 + to_underlying(OrderStopLocation::Through), !allowed));
 					}
+
+					const OrderCouplingMode mode = order->GetCouplingMode();
+					list.push_back(MakeDropDownListDividerItem());
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::None, STR_ORDER_COUPLING_MODE_NONE, 0x500 + to_underlying(OrderCouplingMode::None), false));
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::Couple, STR_ORDER_COUPLING_MODE_COUPLE, 0x500 + to_underlying(OrderCouplingMode::Couple), false));
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::Split, STR_ORDER_COUPLING_MODE_SPLIT, 0x500 + to_underlying(OrderCouplingMode::Split), false));
+					if (mode == OrderCouplingMode::Couple) {
+						const bool arriving = order->IsCouplingArrivingLeads();
+						const OrderCouplingFilter filter = order->GetCouplingFilter();
+						list.push_back(MakeDropDownListDividerItem());
+						list.push_back(MakeDropDownListCheckedItem(!arriving, STR_ORDER_COUPLING_LEADER_WAITING, 0x600, false));
+						list.push_back(MakeDropDownListCheckedItem(arriving, STR_ORDER_COUPLING_LEADER_ARRIVING, 0x601, false));
+						list.push_back(MakeDropDownListDividerItem());
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Any, STR_ORDER_COUPLING_FILTER_ANY, 0x700 + to_underlying(OrderCouplingFilter::Any), false));
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Group, STR_ORDER_COUPLING_FILTER_GROUP, 0x700 + to_underlying(OrderCouplingFilter::Group), false));
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::OrderList, STR_ORDER_COUPLING_FILTER_ORDERLIST, 0x700 + to_underlying(OrderCouplingFilter::OrderList), false));
+					}
 				}
 
 				if (this->vehicle->type == VehicleType::Road && (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT))) {
@@ -3173,6 +3241,7 @@ public:
 						case OPOS_SHARE:                sel = ODDI_SHARE; break;
 						case OPOS_INSERT_FROM_VEHICLE:  sel = ODDI_INSERT_FROM_VEHICLE; break;
 						case OPOS_CONDITIONAL_RETARGET: sel = -1; break;
+						case OPOS_COUPLING_ORDERLIST:   sel = -1; break;
 						case OPOS_DEPARTURE_VIA:        sel = ODDI_LABEL_DEPARTURES_VIA; break;
 						default: NOT_REACHED();
 					}
@@ -3932,8 +4001,48 @@ public:
 				break;
 
 			case WID_O_MGMT_BTN:
-				if (this->goto_type == OPOS_CONDITIONAL_RETARGET) {
+				if (this->goto_type == OPOS_CONDITIONAL_RETARGET || this->goto_type == OPOS_COUPLING_ORDERLIST) {
 					ResetObjectToPlace();
+					break;
+				}
+				if (index >= 0x10000) {
+					/* Group of the coupling filter selected */
+					const VehicleOrderID sel = this->OrderGetSel();
+					this->ModifyOrder(sel, MOF_COUPLING_FILTER, to_underlying(OrderCouplingFilter::Group));
+					this->ModifyOrder(sel, MOF_COUPLING_FILTER_ID, index - 0x10000);
+					break;
+				}
+				if (index >= 0x500 && index < 0x500 + to_underlying(OrderCouplingMode::End)) {
+					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_MODE, index & 0xFF);
+					break;
+				}
+				if (index == 0x600 || index == 0x601) {
+					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_LEADER, index & 0xFF);
+					break;
+				}
+				if (index >= 0x700 && index < 0x700 + to_underlying(OrderCouplingFilter::End)) {
+					switch (static_cast<OrderCouplingFilter>(index & 0xFF)) {
+						case OrderCouplingFilter::Group: {
+							const Order *order = this->vehicle->GetOrder(this->OrderGetSel());
+							GroupID current = (order != nullptr && order->GetCouplingFilter() == OrderCouplingFilter::Group) ? GroupID(order->GetCouplingFilterID()) : GroupID::Invalid();
+							int selected;
+							DropDownList list = GetGroupDropDownList(this->vehicle->owner, current, selected, false, 0x10000);
+							if (list.empty()) {
+								ShowErrorMessage(GetEncodedString(STR_ERROR_CAN_T_MODIFY_THIS_ORDER), GetEncodedString(STR_ERROR_TRAIN_COUPLING_NO_GROUPS), WarningLevel::Info);
+								break;
+							}
+							ShowDropDownList(this, std::move(list), selected, WID_O_MGMT_BTN, 0, DropDownOptions{}, DDSF_SHARED);
+							break;
+						}
+
+						case OrderCouplingFilter::OrderList:
+							this->OrderClick_Goto(OPOS_COUPLING_ORDERLIST);
+							break;
+
+						default:
+							this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_FILTER, index & 0xFF);
+							break;
+					}
 					break;
 				}
 				if (index >= 0x100 && index <= 0x100 + to_underlying(Colours::Invalid)) {
@@ -4089,6 +4198,19 @@ public:
 
 	bool OnVehicleSelect(const Vehicle *v) override
 	{
+		if (this->goto_type == OPOS_COUPLING_ORDERLIST) {
+			v = v->First();
+			if (v->type != VehicleType::Train || v->owner != this->vehicle->owner || v->orders == nullptr) {
+				ShowErrorMessage(GetEncodedString(STR_ERROR_CAN_T_MODIFY_THIS_ORDER), GetEncodedString(STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST), WarningLevel::Info);
+				return true;
+			}
+			const VehicleOrderID sel = this->OrderGetSel();
+			this->ModifyOrder(sel, MOF_COUPLING_FILTER, to_underlying(OrderCouplingFilter::OrderList));
+			this->ModifyOrder(sel, MOF_COUPLING_FILTER_ID, v->orders->index.base());
+			ResetObjectToPlace();
+			return true;
+		}
+
 		if (this->goto_type == OPOS_INSERT_FROM_VEHICLE) {
 			if (Command<Commands::InsertOrdersFromVeh>::Post(STR_ERROR_CAN_T_COPY_ORDER_LIST, CommandCallback::InsertOrdersFromVehicle, this->vehicle->tile, this->vehicle->index, v->index, this->OrderGetSel())) {
 				this->selected_order = -1;
