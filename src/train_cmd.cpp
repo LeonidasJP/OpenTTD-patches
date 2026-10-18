@@ -683,9 +683,9 @@ int GetTrainStopLocation(StationID station_id, TileIndex tile, Train *v, bool up
 	}
 
 	if (front->coupling_target != VehicleID::Invalid() && IsCouplingApproachPlatformTile(front, tile)) {
-		/* Stop directly behind the train to couple to. */
+		/* Stop directly behind the train to couple to, regardless of the stop location of the order. */
 		std::optional<int> coupling_stop = GetCouplingStopLocation(front, DirToDiagDir(v->GetMovingDirection()));
-		if (coupling_stop.has_value()) result = std::min(result, *coupling_stop);
+		if (coupling_stop.has_value()) result = *coupling_stop;
 	}
 
 	return result;
@@ -1026,7 +1026,11 @@ static void ApplyLookAheadItem(const Train *v, const TrainReservationLookAheadIt
 		case TRLIT_STATION: {
 			const StationID st = static_cast<StationID>(item.data_id);
 			if (order->ShouldStopAtStation(last_station_visited, st, Waypoint::GetIfValid(st) != nullptr)) {
-				limit_advisory_speed(item.start + PredictStationStoppingLocation(v, order, item.end - item.start, st), 0, item.z_pos);
+				/* When coupling, the stop is handled by ApplyCouplingLookAhead. */
+				const Train *coupling_target = (v->coupling_target != VehicleID::Invalid() && IsValidDiagDirection(v->coupling_dir)) ? GetCouplingApproachTarget(v) : nullptr;
+				if (coupling_target == nullptr || GetStationIndex(coupling_target->tile) != st) {
+					limit_advisory_speed(item.start + PredictStationStoppingLocation(v, order, item.end - item.start, st), 0, item.z_pos);
+				}
 				last_station_visited = st;
 			} else if (order->IsType(OT_GOTO_WAYPOINT) && order->GetDestination() == st && order->GetWaypointFlags().Test(OrderWaypointFlag::Reverse)) {
 				limit_advisory_speed(item.start + v->gcache.cached_total_length, 0, item.z_pos);
@@ -4523,6 +4527,9 @@ static void TryLongReserveChooseTrainTrack(Train *v, TileIndex tile, Trackdir td
 {
 	if (_long_reserve_disabled) return;
 
+	/* A reservation into the platform of the train to couple to ends there, the train stops to couple. */
+	if (v->coupling_target != VehicleID::Invalid() && IsRailStationTile(tile) && IsCouplingApproachPlatformTile(v, tile)) return;
+
 	const bool long_enough = IsReservationLookAheadLongEnough(v, lookahead_state);
 
 	// We reserved up to a unoccupied signalled tunnel/bridge, reserve past it as well. recursion
@@ -7053,6 +7060,16 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 
 		SetWindowWidgetDirty(WindowClass::VehicleView, consist->index, WID_VV_START_STOP);
 		return true;
+	}
+
+	if (consist->split_partner != VehicleID::Invalid()) {
+		UpdateSplitPartner(consist);
+		if (IsTrainBlockedBySplitPartner(consist)) {
+			/* Do not drive into the train from which this train was just split. */
+			consist->cur_speed = 0;
+			consist->subspeed = 0;
+			return true;
+		}
 	}
 
 	int j;

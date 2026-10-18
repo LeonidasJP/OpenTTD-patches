@@ -844,7 +844,8 @@ CommandCost CmdAddVehicleGroup(DoCommandFlags flags, GroupID group_id, VehicleID
 		if (add_shared) {
 			/* Add vehicles in the shared order list as well. */
 			for (Vehicle *v2 = v->FirstShared(); v2 != nullptr; v2 = v2->NextShared()) {
-				if (v2->group_id != new_g) AddVehicleToGroup(v2, new_g);
+				/* The heads of passive trains in coupled combinations are not primary vehicles. */
+				if (v2->group_id != new_g && v2->IsPrimaryVehicle()) AddVehicleToGroup(v2, new_g);
 			}
 		}
 	}
@@ -931,7 +932,7 @@ CommandCost CmdAddSharedVehicleGroup(DoCommandFlags flags, GroupID id_g, Vehicle
 
 				/* For each shared vehicles add it to the group */
 				for (Vehicle *v2 = v->FirstShared(); v2 != nullptr; v2 = v2->NextShared()) {
-					if (v2->group_id != id_g) Command<Commands::AddVehicleToGroup>::Do(flags, id_g, v2->index, false);
+					if (v2->group_id != id_g && v2->IsPrimaryVehicle()) Command<Commands::AddVehicleToGroup>::Do(flags, id_g, v2->index, false);
 				}
 			}
 		}

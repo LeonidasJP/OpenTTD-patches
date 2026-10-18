@@ -167,7 +167,8 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 			if (v == nullptr || v->type != vli.vtype || !v->IsPrimaryVehicle()) return false;
 
 			for (; v != nullptr; v = v->NextShared()) {
-				add_veh(v);
+				/* The heads of passive trains in coupled combinations are not primary vehicles. */
+				if (v->IsPrimaryVehicle()) add_veh(v);
 			}
 			break;
 		}

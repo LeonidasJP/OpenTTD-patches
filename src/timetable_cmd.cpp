@@ -665,7 +665,7 @@ std::vector<TimetableProgress> PopulateSeparationState(const Vehicle *v_start)
 	std::vector<TimetableProgress> out;
 	if (v_start->GetNumOrders() == 0) return out;
 	for (const Vehicle *v = v_start->FirstShared(); v != nullptr; v = v->NextShared()) {
-		if (!v->vehicle_flags.Test(VehicleFlag::SeparationActive)) continue;
+		if (!v->vehicle_flags.Test(VehicleFlag::SeparationActive) || !v->IsPrimaryVehicle()) continue;
 		bool separation_valid = true;
 		const int n = v->cur_real_order_index;
 		int cumulative_ticks = 0;
