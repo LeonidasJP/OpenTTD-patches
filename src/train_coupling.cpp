@@ -26,6 +26,7 @@
 #include "texteff.hpp"
 #include "timetable.h"
 #include "economy_func.h"
+#include "vehicle_func.h"
 #include "tracerestrict.h"
 #include "vehicle_func.h"
 #include "vehicle_gui.h"
@@ -477,7 +478,7 @@ static void PrepareDepartureAfterSplit(Train *t)
 		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) {
 			if (t->current_order.IsType(OT_LOADING) && t->current_order.GetDestination() == station) {
 				/* The passive train already stopped here while coupled, its arrival is already in its timetable. */
-				PrepareUnload(t);
+				ContinueLoadingAfterSplit(t);
 				SetWindowDirty(WindowClass::StationView, station);
 				return;
 			}
@@ -1012,6 +1013,8 @@ void OnCombinationEnteredStation(Train *head, StationID station)
 			passive->current_order.MakeLoading(true);
 			UpdateVehicleTimetable(passive, true);
 			passive->current_order.SetNonStopType(ONSF_NO_STOP_AT_ANY_STATION);
+			/* The wagons of the passive train load and unload according to its own order. */
+			PrepareCoupledPassiveLoading(passive);
 			SetWindowDirty(WindowClass::VehicleView, passive->index);
 		}
 	}
@@ -1031,6 +1034,9 @@ void OnCombinationLeavingStation(Train *head)
 {
 	Train *passive = GetCoupledPassiveHead(head);
 	if (passive == nullptr || !passive->current_order.IsType(OT_LOADING)) return;
+
+	/* Pay for the cargo of the passive train and update its links, as when leaving normally. */
+	LeaveStationCoupledPassive(passive);
 
 	UpdateVehicleTimetable(passive, false);
 
@@ -1052,7 +1058,10 @@ void OnCombinationLeavingStation(Train *head)
 void TickCoupledPassiveTrain(Train *head)
 {
 	Train *passive = GetCoupledPassiveHead(head);
-	if (passive != nullptr) passive->current_order_time++;
+	if (passive == nullptr) return;
+	passive->current_order_time++;
+	/* The passive train pays the running costs of its own vehicles, as Train::Tick does for the combination. */
+	if (!(head->vehstatus.Test(VehState::Stopped) || head->IsWaitingInDepot()) || head->cur_speed > 0) passive->running_ticks++;
 }
 
 /**
@@ -1160,6 +1169,44 @@ std::vector<VehicleOrderID> GetMirroredCouplingOrders(const Train *passive, cons
 	/* The leading train does not go to the station of the passive train. */
 	result.clear();
 	return result;
+}
+
+/**
+ * Get the end of the cargo unit of a vehicle: the wagons of a coupled combination belong to two units, the leading and the passive train,
+ * which load, unload, earn and pay on their own. Loops over the wagons of a unit run from its front up to (excluding) this end.
+ * @param unit_front The front of the unit: a front vehicle, or the head of a coupled passive train.
+ * @return The head of the passive train if \a unit_front is the head of a combination, otherwise nullptr.
+ */
+const Vehicle *GetCargoUnitEnd(const Vehicle *unit_front)
+{
+	if (unit_front->type != VehicleType::Train || !Train::From(unit_front)->flags.Test(VehicleRailFlag::CoupledCombination)) return nullptr;
+	return GetCoupledPassiveHead(Train::From(unit_front));
+}
+
+/**
+ * Get the front of the cargo unit a vehicle belongs to, see GetCargoUnitEnd.
+ * @param v The vehicle.
+ * @return The head of the passive train if \a v belongs to a coupled passive train, otherwise the first vehicle of the chain.
+ */
+const Vehicle *GetCargoUnitFront(const Vehicle *v)
+{
+	const Vehicle *first = v->First();
+	if (first->type != VehicleType::Train || !Train::From(first)->flags.Test(VehicleRailFlag::CoupledCombination)) return first;
+	for (const Vehicle *u = v; u != first; u = u->Previous()) {
+		if (IsCoupledPassiveTrain(u)) return u;
+	}
+	return first;
+}
+
+/**
+ * Does the passive train of a coupled combination stop at a station, so its wagons load and unload there?
+ * @param passive The head of the passive train.
+ * @param station The station.
+ * @return True if the passive train is loading at the station according to its own orders.
+ */
+bool IsCoupledPassiveTrainStoppingAt(const Vehicle *passive, StationID station)
+{
+	return passive->current_order.IsType(OT_LOADING) && passive->last_station_visited == station;
 }
 
 /** Split the combinations which reached a split order during this tick. */
