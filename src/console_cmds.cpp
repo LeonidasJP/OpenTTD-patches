@@ -868,6 +868,7 @@ struct PeriodicConsoleCommand {
 	uint interval;
 	uint counter;
 	std::string command;
+	bool once = false; ///< Execute only once, see 'after_ticks'.
 };
 static std::vector<PeriodicConsoleCommand> _periodic_console_commands;
 
@@ -887,6 +888,22 @@ static bool ConEveryTicks(std::span<std::string_view> argv)
 	return true;
 }
 
+/**
+ * Debug: execute a console command once after a number of game ticks.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConAfterTicks(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: execute a console command once after N game ticks. Usage: 'after_ticks <ticks> <command>'.");
+		return true;
+	}
+	auto interval = ParseType<uint>(argv[1]);
+	if (!interval.has_value() || *interval == 0) return false;
+	_periodic_console_commands.push_back({ *interval, 0, std::string(argv[2]), true });
+	return true;
+}
+
 /** Debug: check the first train loading console watch and the periodic console commands, called every tick. */
 void ProcessTrainLoadingConsoleWatches()
 {
@@ -895,6 +912,10 @@ void ProcessTrainLoadingConsoleWatches()
 		if (++pc.counter >= pc.interval) {
 			pc.counter = 0;
 			std::string command = pc.command;
+			if (pc.once) {
+				_periodic_console_commands.erase(_periodic_console_commands.begin() + i);
+				i--;
+			}
 			IConsoleCmdExec(command);
 		}
 	}
@@ -1155,6 +1176,44 @@ static bool ConCouplingShiftCargo(std::span<std::string_view> argv)
 			IConsolePrint(CC_DEFAULT, "coupling_shift_cargo: moved {} to the {} train", moved, to_passive ? "passive" : "leading");
 		}
 	}
+	return true;
+}
+
+/**
+ * Debug: report trains which crashed since the last call, with their coupling state.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConReportCrashedTrains(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: report trains which crashed since the last call. Usage: 'report_crashed_trains'.");
+		return true;
+	}
+	static btree::btree_set<VehicleID> reported;
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (!t->vehstatus.Test(VehState::Crashed) || reported.contains(t->index)) continue;
+		reported.insert(t->index);
+		const Train *mf = t->GetMovingFront();
+		IConsolePrint(CC_WARNING, "Crashed train: id {}, unit {}, group {}, tile {}x{}, order idx {} type {} dest {}, target {}, split partner {}, coupled {}, approach flags speedlimit {} fromorders {}",
+				t->index, t->unitnumber, t->group_id.base(), TileX(mf->tile), TileY(mf->tile), t->cur_real_order_index, t->current_order.GetType(),
+				t->current_order.GetDestination().base(), t->coupling_target, t->split_partner, IsTrainCoupled(t),
+				t->flags.Test(VehicleRailFlag::CouplingSpeedLimit), t->flags.Test(VehicleRailFlag::CouplingFromOrders));
+	}
+	return true;
+}
+
+/**
+ * Debug: show and clear the pause mode, to continue saved games headless.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConForceUnpause(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: show and clear all pause modes. Usage: 'force_unpause'.");
+		return true;
+	}
+	IConsolePrint(CC_DEFAULT, "Pause mode was 0x{:X}", _pause_mode.base());
+	_pause_mode = {};
 	return true;
 }
 
@@ -5283,6 +5342,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("start_stop_train",        ConStartStopTrain);
 	IConsole::CmdRegister("on_train_loading",        ConOnTrainLoading);
 	IConsole::CmdRegister("every_ticks",             ConEveryTicks);
+	IConsole::CmdRegister("after_ticks",             ConAfterTicks);
 	IConsole::CmdRegister("debug_coupling",          ConDebugCoupling);
 	IConsole::CmdRegister("dump_rail_tiles",         ConDumpRailTiles);
 	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
@@ -5292,6 +5352,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("coupling_cargo",          ConCouplingCargo);
 	IConsole::CmdRegister("open_train_windows",      ConOpenTrainWindows);
 	IConsole::CmdRegister("coupling_shift_cargo",    ConCouplingShiftCargo);
+	IConsole::CmdRegister("report_crashed_trains",   ConReportCrashedTrains);
+	IConsole::CmdRegister("force_unpause",           ConForceUnpause);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
