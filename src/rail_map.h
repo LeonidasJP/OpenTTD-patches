@@ -533,6 +533,8 @@ inline SignalState GetSingleSignalState(TileIndex t, uint8_t signalbit)
 inline void SetPresentSignals(TileIndex tile, uint signals)
 {
 	SB(_m[tile].m3, 4, 4, signals);
+	/* Removed signals do not show the coupling aspect any more. */
+	SB(_m[tile].m3, 0, 4, GB(_m[tile].m3, 0, 4) & signals);
 }
 
 /**
@@ -614,7 +616,50 @@ inline void SetSignalStateByTrackdir(TileIndex tile, Trackdir trackdir, SignalSt
 		SetSignalStates(tile, GetSignalStates(tile) | SignalAlongTrackdir(trackdir));
 	} else {
 		SetSignalStates(tile, GetSignalStates(tile) & ~SignalAlongTrackdir(trackdir));
+		/* A red signal does not allow coupling any more, see HasSignalCouplingAspect. */
+		SB(_m[tile].m3, 0, 4, GB(_m[tile].m3, 0, 4) & ~SignalAlongTrackdir(trackdir));
 	}
+}
+
+/**
+ * Does a signal show that a train may drive into the occupied platform behind it, to couple to the train waiting there?
+ * The bits use the same positions as the present signals, see GetPresentSignals. They are cleared when the signal becomes red.
+ * @param tile The rail tile with signals.
+ * @param signalbit The signal position, see IsSignalPresent.
+ * @return True if the signal shows the coupling aspect.
+ */
+inline bool HasSignalCouplingAspect(TileIndex tile, uint8_t signalbit)
+{
+	return HasBit(_m[tile].m3, signalbit);
+}
+
+/**
+ * Get the coupling aspect bits of all signals on a rail tile, see HasSignalCouplingAspect.
+ * @param tile The rail tile with signals.
+ * @return The coupling aspect bits.
+ */
+inline uint GetSignalCouplingAspects(TileIndex tile)
+{
+	return GB(_m[tile].m3, 0, 4);
+}
+
+/**
+ * Set the coupling aspect of the signal along a trackdir, see HasSignalCouplingAspect.
+ * @param tile The rail tile with signals.
+ * @param trackdir The trackdir of the signal.
+ */
+inline void SetSignalCouplingAspect(TileIndex tile, Trackdir trackdir)
+{
+	SB(_m[tile].m3, 0, 4, GB(_m[tile].m3, 0, 4) | SignalAlongTrackdir(trackdir));
+}
+
+/**
+ * Clear the coupling aspects of all signals on a rail tile, see HasSignalCouplingAspect.
+ * @param tile The rail tile with signals.
+ */
+inline void ClearSignalCouplingAspects(TileIndex tile)
+{
+	SB(_m[tile].m3, 0, 4, 0);
 }
 
 /**
