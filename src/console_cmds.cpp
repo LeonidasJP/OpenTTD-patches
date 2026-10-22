@@ -771,6 +771,10 @@ static bool ConDebugCoupling(std::span<std::string_view> argv)
 		IConsolePrint(CC_DEFAULT, "Train {}: passive in combination {}", v->unitnumber, GetCouplingCombinationHead(v)->unitnumber);
 		IConsolePrint(CC_DEFAULT, "  order {} (real {}) type {} dest {} order time {} lateness {}",
 				v->cur_implicit_order_index + 1, v->cur_real_order_index + 1, v->current_order.GetType(), v->current_order.GetDestination().base(), v->current_order_time, v->lateness_counter);
+		const Train *leader = nullptr;
+		std::string mirrored;
+		for (VehicleOrderID index : GetMirroredCouplingOrders(v, &leader)) mirrored += fmt::format(" {}", index + 1);
+		IConsolePrint(CC_DEFAULT, "  last station {}, mirrored orders of the leader:{}", v->last_station_visited.base(), mirrored.empty() ? " none" : mirrored);
 		return true;
 	}
 	const Train *mf = v->GetMovingFront();
