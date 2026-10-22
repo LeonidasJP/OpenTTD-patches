@@ -384,7 +384,9 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
   - het begin is de laatste order van de leider (terugzoekend vanaf zijn huidige order, hoogstens één ronde) naar het laatst bezochte station van het passieve stel; die order zelf telt niet mee;
   - het einde is de eerste order van de leider daarna naar het station van de huidige order van het passieve stel; ook die telt niet mee, want het passieve stel heeft daar zijn eigen regel;
   - wordt het einde niet gevonden, dan worden er geen gespiegelde orders getoond;
-  - de regels zijn grijs, tonen de tekst en tijden van de leider, en zijn niet te selecteren of te bewerken.
+  - de regels zijn grijs, tonen de tekst en tijden van de leider, en zijn niet te selecteren of te bewerken;
+  - in het dienstregelingsscherm staan ze direct na de reisregel naar de huidige order, zonder aankomst- en vertrektijden.
+  - *Gebouwd* (`GetMirroredCouplingOrders`). Het orderscherm en het dienstregelingsscherm vertalen tussen zichtbare regels en orders. Selectie, slepen en de commando's blijven werken met de eigen orders.
 - **Nieuwsberichten:**
   - koppelen mislukt omdat de partner te laat is;
   - koppelen geweigerd: te lang, te veel stellen, of het stel zou nooit meer loskomen;
@@ -407,7 +409,7 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
 1. **Fase 1 – kern:** het record, `CoupleTrains` en `SplitTrain` (hoogstens twee treinen). Een debugcommando om handmatig te koppelen en te splitsen. Savegame-ondersteuning. Het depot vergrendelen.
 2. **Fase 2 – aanrijden:** de gedeeltelijke perronreservering, de snelheden van 40 en 15 km/u, het koppelpunt, de uitzondering voor botsingen, realistisch remmen en het rangeerbeeld.
 3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders. *Gebouwd.* Nog niet gedaan: een melding bij "alle voertuigen naar depot" vanuit een voertuiglijst, en de volgordecontrole bij het invoegen van de orders van een ander voertuig.
-4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel.
+4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel. *Gebouwd:* de dienstregeling van het passieve stel (§3.4a), vertrekborden, het eigen venster en de groep van het passieve stel, en de gespiegelde orders (§9). Nog te doen: `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel (§7).
 5. **Fase 5 – seinbeeld:** knipperende seinen, de recolour-sprites, de groen-geel-variant en de NewGRF-bit 25 met documentatie in `newgrf-additions.html`.
 
 **Testscenario's:**
