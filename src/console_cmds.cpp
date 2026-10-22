@@ -1218,6 +1218,27 @@ static bool ConForceUnpause(std::span<std::string_view> argv)
 }
 
 /**
+ * Debug: list the signals which show the coupling aspect.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConListCouplingSignals(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: list the signals which show the coupling aspect. Usage: 'list_coupling_signals'.");
+		return true;
+	}
+	for (TileIndex tile : GetCouplingSignalTiles()) {
+		if (!IsTileType(tile, TileType::Railway) || !HasSignals(tile)) {
+			IConsolePrint(CC_DEFAULT, "Coupling signal tile {}x{}: no signals any more", TileX(tile), TileY(tile));
+			continue;
+		}
+		IConsolePrint(CC_DEFAULT, "Coupling signal tile {}x{}: coupling bits 0x{:X}, present 0x{:X}, states 0x{:X}", TileX(tile), TileY(tile),
+				GetSignalCouplingAspects(tile), GetPresentSignals(tile), GetSignalStates(tile));
+	}
+	return true;
+}
+
+/**
  * Zoom map to given level.
  * @copydoc IConsoleCmdProc
  */
@@ -5354,6 +5375,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("coupling_shift_cargo",    ConCouplingShiftCargo);
 	IConsole::CmdRegister("report_crashed_trains",   ConReportCrashedTrains);
 	IConsole::CmdRegister("force_unpause",           ConForceUnpause);
+	IConsole::CmdRegister("list_coupling_signals",   ConListCouplingSignals);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
