@@ -1017,6 +1017,10 @@ void OnCombinationEnteredStation(Train *head, StationID station)
 	}
 
 	if (split) _pending_train_splits.push_back(head->index);
+
+	/* The mirrored orders of the passive train follow the leading train. */
+	SetWindowDirty(WindowClass::VehicleOrders, passive->index);
+	SetWindowDirty(WindowClass::VehicleTimetable, passive->index);
 }
 
 /**
@@ -1037,6 +1041,8 @@ void OnCombinationLeavingStation(Train *head)
 	}
 	AdvanceCoupledPassiveOrders(passive);
 	SetWindowDirty(WindowClass::VehicleView, passive->index);
+	SetWindowDirty(WindowClass::VehicleOrders, passive->index);
+	SetWindowDirty(WindowClass::VehicleTimetable, passive->index);
 }
 
 /**
@@ -1107,6 +1113,53 @@ void SetCoupledPassiveTrainGroup(const Train *passive, GroupID group)
 	if (head == nullptr) return;
 	auto it = _train_couplings.find(head->index);
 	if (it != _train_couplings.end()) it->second.passive_group = group;
+}
+
+/**
+ * Get the orders of the leading train which a coupled passive train drives along with, from the station the passive train
+ * visited last up to the station of its current order. Both these stations themselves are not included.
+ * @param passive The head of the passive train.
+ * @param[out] leader The head of the combination, which carries the orders of the leading train.
+ * @return The indices of the orders of the leading train, empty if there are none to show.
+ */
+std::vector<VehicleOrderID> GetMirroredCouplingOrders(const Train *passive, const Train **leader)
+{
+	std::vector<VehicleOrderID> result;
+	const Train *head = passive->flags.Test(VehicleRailFlag::CoupledPassiveHead) ? GetCouplingCombinationHead(passive) : nullptr;
+	if (leader != nullptr) *leader = head;
+	if (head == nullptr || head->GetNumOrders() == 0 || passive->GetNumManualOrders() == 0) return result;
+
+	/* While the passive train stops at one of its own stations, it has no orders of the leading train ahead. */
+	if (passive->current_order.IsType(OT_LOADING)) return result;
+
+	const Order *target = passive->GetOrder(passive->cur_real_order_index);
+	if (target == nullptr || !target->IsType(OT_GOTO_STATION)) return result;
+
+	auto is_stop_at = [](const Order *o, DestinationID station) {
+		return (o->IsType(OT_GOTO_STATION) || o->IsType(OT_IMPLICIT)) && o->GetDestination() == station;
+	};
+
+	/* Start after the last order of the leading train to the station the passive train visited last. */
+	const uint num_orders = head->GetNumOrders();
+	VehicleOrderID start = head->cur_real_order_index % num_orders;
+	for (uint i = 0; i < num_orders; i++) {
+		const VehicleOrderID index = (head->cur_real_order_index + num_orders - i) % num_orders;
+		if (is_stop_at(head->GetOrder(index), passive->last_station_visited)) {
+			start = (index + 1) % num_orders;
+			break;
+		}
+	}
+
+	/* End before the first order of the leading train to the station of the current order of the passive train. */
+	for (uint i = 0; i < num_orders; i++) {
+		const VehicleOrderID index = (start + i) % num_orders;
+		if (is_stop_at(head->GetOrder(index), target->GetDestination())) return result;
+		result.push_back(index);
+	}
+
+	/* The leading train does not go to the station of the passive train. */
+	result.clear();
+	return result;
 }
 
 /** Split the combinations which reached a split order during this tick. */
