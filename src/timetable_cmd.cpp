@@ -26,6 +26,8 @@
 
 #include "table/strings.h"
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 /**
@@ -165,7 +167,7 @@ static void ChangeTimetable(Vehicle *v, VehicleOrderID order_number, uint32_t va
 CommandCost CmdChangeTimetable(DoCommandFlags flags, VehicleID veh, VehicleOrderID order_number, ModifyTimetableFlags mtf, uint32_t data, ModifyTimetableCtrlFlags ctrl_flags)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -345,7 +347,7 @@ CommandCost CmdChangeTimetable(DoCommandFlags flags, VehicleID veh, VehicleOrder
 CommandCost CmdBulkChangeTimetable(DoCommandFlags flags, VehicleID veh, ModifyTimetableFlags mtf, uint32_t data, ModifyTimetableCtrlFlags ctrl_flags)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -380,7 +382,7 @@ CommandCost CmdBulkChangeTimetable(DoCommandFlags flags, VehicleID veh, ModifyTi
 CommandCost CmdSetVehicleOnTime(DoCommandFlags flags, VehicleID veh, bool apply_to_group)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle() || v->orders == nullptr) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v) || v->orders == nullptr) return CMD_ERROR;
 
 	/* A vehicle can't be late if its timetable hasn't started.
 	 * If we're setting all vehicles in the group, we handle that below. */
@@ -472,7 +474,7 @@ static bool VehicleTimetableSorter(Vehicle * const &a, Vehicle * const &b)
 CommandCost CmdSetTimetableStart(DoCommandFlags flags, VehicleID veh, bool timetable_all, StateTicks start_state_tick)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle() || v->orders == nullptr) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v) || v->orders == nullptr) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -537,7 +539,7 @@ CommandCost CmdSetTimetableStart(DoCommandFlags flags, VehicleID veh, bool timet
 CommandCost CmdAutofillTimetable(DoCommandFlags flags, VehicleID veh, bool autofill, bool preserve_wait_time)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle() || v->orders == nullptr) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v) || v->orders == nullptr) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -583,7 +585,7 @@ CommandCost CmdAutofillTimetable(DoCommandFlags flags, VehicleID veh, bool autof
 CommandCost CmdAutomateTimetable(DoCommandFlags flags, VehicleID veh, bool automate)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -621,7 +623,7 @@ CommandCost CmdAutomateTimetable(DoCommandFlags flags, VehicleID veh, bool autom
 CommandCost CmdTimetableSeparation(DoCommandFlags flags, VehicleID veh, bool separation)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;

@@ -47,6 +47,8 @@
 #include "table/string_colours.h"
 #include "table/sprites.h"
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 enum SchdispatchWidgets : WidgetID {
@@ -103,7 +105,7 @@ static void SetScheduleLastDispatchedCallback(const Window *w, StateTicks date, 
 static void ScheduleAddIntl(VehicleID veh, uint schedule_index, StateTicks date, uint extra_slots, uint offset, uint16_t slot_flags, DispatchSlotRouteID route_id, bool wrap_mode = false)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle() || schedule_index >= v->orders->GetScheduledDispatchScheduleCount()) return;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v) || schedule_index >= v->orders->GetScheduledDispatchScheduleCount()) return;
 
 	const DispatchSchedule &ds = v->orders->GetDispatchScheduleByIndex(schedule_index);
 
