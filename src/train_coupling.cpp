@@ -27,6 +27,7 @@
 #include "timetable.h"
 #include "economy_func.h"
 #include "vehicle_func.h"
+#include "cargopacket.h"
 #include "tracerestrict.h"
 #include "vehicle_func.h"
 #include "vehicle_gui.h"
@@ -394,7 +395,17 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 		t->wait_counter = 0;
 	}
 
-	LeaveStationForCoupling(passive);
+	/* When both trains are loading at the same station, the passive train keeps loading as part of the combination,
+	 * and leaves the station together with it, see OnCombinationLeavingStation. */
+	const bool passive_keeps_loading = passive->current_order.IsType(OT_LOADING) && leader->current_order.IsAnyLoadingType() &&
+			passive->last_station_visited == leader->last_station_visited;
+	if (passive_keeps_loading) {
+		Station *st = Station::Get(passive->last_station_visited);
+		st->loading_vehicles.erase(std::remove(st->loading_vehicles.begin(), st->loading_vehicles.end(), passive), st->loading_vehicles.end());
+		HideFillingPercent(&passive->fill_percent_te_id);
+	} else {
+		LeaveStationForCoupling(passive);
+	}
 
 	SeparateLastLoadingStation(first);
 	SeparateLastLoadingStation(second);
@@ -433,8 +444,8 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 	first->flags.Reset(VehicleRailFlag::CouplingFailedLast);
 	second->flags.Reset(VehicleRailFlag::CouplingFailedLast);
 
-	/* The timetable of the passive train continues, it heads for its next station order. */
-	AdvanceCoupledPassiveOrders(second);
+	/* The timetable of the passive train continues, it heads for its next station order once it leaves this station. */
+	if (!passive_keeps_loading) AdvanceCoupledPassiveOrders(second);
 	InvalidateVehicleOrder(second, VIWD_MODIFY_ORDERS);
 	SetWindowDirty(WindowClass::VehicleView, second->index);
 
@@ -1209,6 +1220,184 @@ bool IsCoupledPassiveTrainStoppingAt(const Vehicle *passive, StationID station)
 	return passive->current_order.IsType(OT_LOADING) && passive->last_station_visited == station;
 }
 
+/**
+ * Get the next station at which a train stops after an order, without evaluating conditional orders.
+ * @param t The train.
+ * @param order The order.
+ * @return The station, or StationID::Invalid() if unknown.
+ */
+static StationID GetNextStationAfterOrder(const Train *t, const Order *order)
+{
+	const uint num_orders = t->GetNumOrders();
+	const Order *next = order;
+	for (uint i = 0; i < num_orders; i++) {
+		next = t->orders->GetNext(next);
+		if (next->IsType(OT_CONDITIONAL)) return StationID::Invalid();
+		if (next->IsType(OT_GOTO_STATION) && (next->GetNonStopType() & ONSF_NO_STOP_AT_DESTINATION_STATION) == 0) return next->GetDestination().ToStationID();
+	}
+	return StationID::Invalid();
+}
+
+/**
+ * Get the station where a coupled combination splits next, and the stations both trains go to after that.
+ * The combination splits at the first split order of the leading or passive train along the route of the leading train.
+ * @param head The head of the combination.
+ * @return The split route, see CouplingSplitRoute::IsValid.
+ */
+CouplingSplitRoute GetCouplingSplitRoute(const Train *head)
+{
+	CouplingSplitRoute route;
+	const Train *passive = GetCoupledPassiveHead(head);
+	if (passive == nullptr || head->GetNumManualOrders() == 0 || passive->GetNumManualOrders() == 0) return route;
+
+	/* Find the first station order from the current order of a train, which matches a condition. */
+	auto find_order = [](const Train *t, bool skip_current_stop, auto pred) -> std::pair<const Order *, uint> {
+		const uint num_orders = t->GetNumOrders();
+		for (uint i = 0; i < num_orders; i++) {
+			const Order *o = t->GetOrder((t->cur_real_order_index + i) % num_orders);
+			if (i == 0 && skip_current_stop && t->current_order.IsType(OT_LOADING)) continue;
+			if (o->IsType(OT_GOTO_STATION) && pred(o)) return { o, i };
+		}
+		return { nullptr, UINT_MAX };
+	};
+	auto is_split = [](const Order *o) { return o->GetCouplingMode() == OrderCouplingMode::Split; };
+	const bool leader_stopped = head->current_order.IsAnyLoadingType();
+	const bool passive_stopped = passive->current_order.IsType(OT_LOADING);
+
+	uint best = UINT_MAX;
+	for (const Order *split : { find_order(passive, passive_stopped, is_split).first, find_order(head, leader_stopped, is_split).first }) {
+		if (split == nullptr) continue;
+		const StationID station = split->GetDestination().ToStationID();
+		const uint position = find_order(head, leader_stopped, [&](const Order *o) { return o->GetDestination() == station; }).second;
+		if (position < best) {
+			best = position;
+			route.split_station = station;
+		}
+	}
+	if (route.split_station == StationID::Invalid()) return route;
+
+	const StationID split_station = route.split_station;
+	const Order *leader_split = find_order(head, leader_stopped, [&](const Order *o) { return o->GetDestination() == split_station; }).first;
+	if (leader_split != nullptr) route.leader_after = GetNextStationAfterOrder(head, leader_split);
+
+	const Order *passive_split = find_order(passive, passive_stopped, [&](const Order *o) { return o->GetDestination() == split_station; }).first;
+	if (passive_split != nullptr) {
+		route.passive_after = GetNextStationAfterOrder(passive, passive_split);
+	} else {
+		/* The passive train has no stop at the split station, it continues to its next station. */
+		const Order *next = find_order(passive, passive_stopped, [](const Order *) { return true; }).first;
+		if (next != nullptr) route.passive_after = next->GetDestination().ToStationID();
+	}
+	return route;
+}
+
+/**
+ * Get the next hop a cargo packet will take at the station where a combination splits. Unlike the normal random choice,
+ * this choice is fixed for a packet, so it is the same when loading the cargo before the split and when staging it at the split station.
+ * @param cp The cargo packet.
+ * @param split_station The station where the combination splits.
+ * @param cargo The cargo type of the packet.
+ * @return The next hop at the split station, or StationID::Invalid() if there is no flow for the packet.
+ */
+StationID GetCouplingSplitVia(const CargoPacket *cp, StationID split_station, CargoType cargo)
+{
+	const Station *st = Station::GetIfValid(split_station);
+	if (st == nullptr) return StationID::Invalid();
+	const FlowStatMap &flows = st->goods[cargo].ConstFlows();
+	FlowStatMap::const_iterator flow_it = flows.find(cp->GetFirstStation());
+	if (flow_it == flows.end()) return StationID::Invalid();
+	bool restricted;
+	return flow_it->GetViaDeterministic(cp->GetRouteHash(split_station), restricted);
+}
+
+/**
+ * Will a combination split at a station where it arrives, see OnCombinationEnteredStation?
+ * @param head The head of the combination.
+ * @param station The station.
+ * @return True if the leading train or the passive train has a split order for this station as current order.
+ */
+bool WillCombinationSplitAt(const Train *head, StationID station)
+{
+	const Order *leader_order = GetCurrentCouplingOrder(head);
+	if (leader_order != nullptr && leader_order->GetCouplingMode() == OrderCouplingMode::Split) return true;
+	const Train *passive = GetCoupledPassiveHead(head);
+	if (passive == nullptr || passive->GetNumManualOrders() == 0) return false;
+	const Order *passive_order = passive->GetOrder(passive->cur_real_order_index);
+	return passive_order != nullptr && passive_order->IsType(OT_GOTO_STATION) && passive_order->GetDestination() == station &&
+			passive_order->GetCouplingMode() == OrderCouplingMode::Split;
+}
+
+/**
+ * A combination arrives at the station where it splits: move the cargo which continues with the other train to that train,
+ * as far as it has room. Nothing is paid, the cargo keeps its origin, transit time and feeder share.
+ * Cargo which does not fit stays, and transfers at the station after the split.
+ * @param head The head of the combination.
+ */
+void ExchangeCargoBeforeSplit(Train *head)
+{
+	const CouplingSplitRoute route = GetCouplingSplitRoute(head);
+	if (!route.IsValid()) return;
+	Train *passive = GetCoupledPassiveHead(head);
+
+	bool changed = false;
+	for (Train *from_unit : { static_cast<Train *>(head), passive }) {
+		const bool from_passive = (from_unit == passive);
+		Train *to_unit = from_passive ? head : passive;
+		const StationID own_after = from_passive ? route.passive_after : route.leader_after;
+		const StationID other_after = from_passive ? route.leader_after : route.passive_after;
+		const Vehicle *from_end = GetCargoUnitEnd(from_unit);
+		const Vehicle *to_end = GetCargoUnitEnd(to_unit);
+
+		for (Vehicle *from = from_unit; from != from_end; from = from->Next()) {
+			if (from->cargo_cap == 0 || from->cargo.StoredCount() == 0) continue;
+			/* Only cargo which is not staged or reserved can be moved. */
+			if (from->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != from->cargo.TotalCount()) continue;
+			const CargoType cargo = from->cargo_type;
+			CargoPacketFilter filter = [&](const CargoPacket *cp) {
+				const StationID via = GetCouplingSplitVia(cp, route.split_station, cargo);
+				return via == other_after && via != own_after;
+			};
+			for (Vehicle *to = to_unit; to != to_end; to = to->Next()) {
+				if (to->cargo_type != cargo || to->cargo_cap <= to->cargo.StoredCount()) continue;
+				if (to->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != to->cargo.TotalCount()) continue;
+				const uint moved = from->cargo.ShiftFiltered(to->cargo_cap - to->cargo.StoredCount(), &to->cargo, filter);
+				if (moved > 0) {
+					changed = true;
+					Debug(misc, 1, "Coupling cargo exchange before the split of {}: {} moved from train {} to train {}", head->unitnumber, moved, from_unit->unitnumber, to_unit->unitnumber);
+				}
+			}
+		}
+	}
+
+	if (changed) {
+		head->MarkDirty();
+		SetWindowDirty(WindowClass::VehicleDetails, head->index);
+		SetWindowDirty(WindowClass::VehicleDetails, passive->index);
+	}
+}
+
+/** Whether cargo is staged at a station where a combination splits, see CouplingSplitStagingScope. */
+static bool _coupling_split_staging = false;
+
+/**
+ * Is cargo staged at a station where a combination splits? Then the next hops are the fixed choices of GetCouplingSplitVia.
+ * @return True during a CouplingSplitStagingScope.
+ */
+bool IsCouplingSplitStaging()
+{
+	return _coupling_split_staging;
+}
+
+CouplingSplitStagingScope::CouplingSplitStagingScope(bool active) : previous(_coupling_split_staging)
+{
+	_coupling_split_staging = active || previous;
+}
+
+CouplingSplitStagingScope::~CouplingSplitStagingScope()
+{
+	_coupling_split_staging = this->previous;
+}
+
 /** Split the combinations which reached a split order during this tick. */
 static void ProcessPendingTrainSplits()
 {
@@ -1226,6 +1415,8 @@ static void ProcessPendingTrainSplits()
 			Debug(misc, 1, "Train split of {} failed: {}", head->index, ret.GetErrorMessage());
 			continue;
 		}
+		/* The passive train stages its cargo when it starts loading after the split. */
+		CouplingSplitStagingScope staging(true);
 		SplitCombination(head);
 	}
 }

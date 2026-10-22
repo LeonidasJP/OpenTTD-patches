@@ -17,6 +17,7 @@
 #include "tile_type.h"
 #include "station_type.h"
 #include "order_type.h"
+#include "cargo_type.h"
 #include <optional>
 #include <vector>
 #include "3rdparty/cpp-btree/btree_map.h"
@@ -84,6 +85,34 @@ std::vector<VehicleOrderID> GetMirroredCouplingOrders(const Train *passive, cons
 const Vehicle *GetCargoUnitEnd(const Vehicle *unit_front);
 const Vehicle *GetCargoUnitFront(const Vehicle *v);
 bool IsCoupledPassiveTrainStoppingAt(const Vehicle *passive, StationID station);
+
+/** Where a coupled combination splits, and where both trains go next. */
+struct CouplingSplitRoute {
+	StationID split_station = StationID::Invalid(); ///< Station where the combination splits.
+	StationID leader_after = StationID::Invalid();  ///< Next station of the leading train after the split.
+	StationID passive_after = StationID::Invalid(); ///< Next station of the passive train after the split.
+
+	/** Do both trains go to different, known stations after the split? */
+	bool IsValid() const
+	{
+		return this->split_station != StationID::Invalid() && this->leader_after != StationID::Invalid() &&
+				this->passive_after != StationID::Invalid() && this->leader_after != this->passive_after;
+	}
+};
+
+struct CargoPacket;
+CouplingSplitRoute GetCouplingSplitRoute(const Train *head);
+StationID GetCouplingSplitVia(const CargoPacket *cp, StationID split_station, CargoType cargo);
+bool WillCombinationSplitAt(const Train *head, StationID station);
+void ExchangeCargoBeforeSplit(Train *head);
+bool IsCouplingSplitStaging();
+
+/** While this scope exists, the cargo is staged at a station where a combination splits, see GetCouplingSplitVia. */
+struct CouplingSplitStagingScope {
+	bool previous;
+	CouplingSplitStagingScope(bool active);
+	~CouplingSplitStagingScope();
+};
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
