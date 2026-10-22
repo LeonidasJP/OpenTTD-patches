@@ -346,6 +346,20 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
    - Daarnaast `LastLoadStationSeparate` voor gekoppelde wagons.
    - Zonder deze aanpassing plant cargodist te weinig capaciteit voor B→D.
 
+### 7.2a Stap A: laden en lossen per stel (fase 4)
+
+Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het vooraf loten en het wisselen van stel binnen de trein (§7.2, punten 2 tot 4) volgen in stap B. Tot die tijd stapt een reiziger die in het verkeerde stel zit op het splitsstation uit en weer in het andere stel. Dat is een gewone overstap.
+
+- **Stel:** de keten van een combinatie bestaat uit twee stellen: van de kop tot vóór de passieve kop (de leider), en van de passieve kop tot het einde. Elke lus over "de wagons van een trein" in de lading-, linkgraph- en kostencode loopt alleen over het eigen stel (`GetCargoUnitEnd`, `GetCargoUnitFront`).
+- **Stopt het passieve stel op dit station** (zijn huidige order is "laden", §3.4a):
+  - bij aankomst: linkstatistiek (`VehicleIncreaseStats`), een eigen `CargoPayment` en het klaarzetten van de lading (`Stage`) met zijn eigen order en zijn eigen volgende station;
+  - tijdens het laden: de wagons van het passieve stel lossen en laden volgens de order en het volgende station van het passieve stel, en betalen via zijn eigen `CargoPayment`;
+  - bij vertrek: de laatste-laadstations van zijn wagons, de link-refresh (`LinkRefresher`) met zijn eigen orders, en het afrekenen van zijn `CargoPayment`. De opbrengst gaat naar het passieve stel.
+- **Stopt het passieve stel hier niet** (een tussenstop van alleen de leider): de wagons van het passieve stel blijven dicht. Er wordt niets geladen of gelost.
+- **Wachten:** de leider bepaalt wanneer de combinatie vertrekt. Zolang het passieve stel nog laadt of lost, wacht de combinatie. Wachten op vol laden in een order van het passieve stel telt niet mee. Vol laden wordt ook niet gereserveerd voor het passieve stel.
+- **Ombouwen in het station** gebeurt niet voor het passieve stel zolang het gekoppeld is.
+- **Kosten:** de leider betaalt de lopende kosten van zijn eigen stel, en het passieve stel die van zijn stel. De `running_ticks` van het passieve stel lopen mee met die van de leider.
+
 ### 7.3 Opbrengst en kosten
 
 - Bij aflevering worden de opbrengsten per wagon toegerekend aan het stel waar die wagon bij hoort (het record of de leider). Daarvoor komt een toewijzing per stel in `CargoPayment`.
