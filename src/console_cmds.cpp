@@ -775,6 +775,9 @@ static bool ConDebugCoupling(std::span<std::string_view> argv)
 		std::string mirrored;
 		for (VehicleOrderID index : GetMirroredCouplingOrders(v, &leader)) mirrored += fmt::format(" {}", index + 1);
 		IConsolePrint(CC_DEFAULT, "  last station {}, mirrored orders of the leader:{}", v->last_station_visited.base(), mirrored.empty() ? " none" : mirrored);
+		uint passive_cargo = 0;
+		for (const Vehicle *u = v; u != nullptr; u = u->Next()) passive_cargo += u->cargo.StoredCount();
+		IConsolePrint(CC_DEFAULT, "  cargo {}, profit this year {}, cargo payment {}", passive_cargo, v->profit_this_year >> 8, v->cargo_payment != nullptr ? "yes" : "no");
 		return true;
 	}
 	const Train *mf = v->GetMovingFront();
@@ -785,6 +788,12 @@ static bool ConDebugCoupling(std::span<std::string_view> argv)
 	IConsolePrint(CC_DEFAULT, "  reservation end {}x{} td {} okay {}", TileX(res.tile), TileY(res.tile), res.trackdir, res.okay);
 	IConsolePrint(CC_DEFAULT, "  order {} type {} order time {} lateness {} timetable start {}",
 			v->cur_implicit_order_index + 1, v->current_order.GetType(), v->current_order_time, v->lateness_counter, v->timetable_start.base());
+	{
+		uint unit_cargo = 0;
+		const Vehicle *unit_end = GetCargoUnitEnd(v);
+		for (const Vehicle *u = v; u != unit_end; u = u->Next()) unit_cargo += u->cargo.StoredCount();
+		IConsolePrint(CC_DEFAULT, "  cargo {}, profit this year {}", unit_cargo, v->profit_this_year >> 8);
+	}
 	IConsolePrint(CC_DEFAULT, "  roles: coupled {} leading {} split off last {} coupling failed {}",
 			HasTrainCouplingRole(v, OrderCouplingRole::Coupled), HasTrainCouplingRole(v, OrderCouplingRole::Leading),
 			HasTrainCouplingRole(v, OrderCouplingRole::SplitOffLast), HasTrainCouplingRole(v, OrderCouplingRole::CouplingFailed));
