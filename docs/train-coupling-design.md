@@ -89,6 +89,24 @@ Een **combinatie** is nooit een geschikte partner, en een combinatie koppelt zel
 - Stopt de combinatie op een station dat de huidige order van het passieve stel is, maar zonder `Splitsen`, dan gaat ook de order van het passieve stel een stap verder. Zo werkt het ook als beide lijsten alle stops bevatten, zoals bij één gedeelde lijst.
 - In het dienstregelingsscherm is `B → E` één rit, met de gespiegelde stops grijs eronder. De vertraging van het passieve stel wordt normaal berekend bij aankomst op E.
 
+### 3.4a Dienstregeling van het passieve stel (fase 4)
+
+Het passieve stel houdt zijn eigen order- en dienstregelingsgegevens bij, precies alsof het zelf rijdt. Zo klopt zijn vertraging na het splitsen, en kan het vertrekbord er gewoon mee rekenen.
+
+- **Tick:** bij elke tick verhoogt de leider ook `current_order_time` van het passieve stel.
+- **Naar de volgende stationsorder:** bij het koppelen en bij elk vertrek loopt het passieve stel door zijn orders tot de volgende stationsorder, zoals `ProcessOrders` dat doet:
+  - conditionele orders, slots en tellers worden uitgevoerd;
+  - depot-, waypoint- en labelorders worden overgeslagen, met een normale dienstregelingsstap;
+  - de huidige order (`current_order`) wordt die stationsorder.
+- **Stop op het station van de huidige order, zonder splitsen:**
+  - Bij aankomst wordt de reistijd verwerkt (`UpdateVehicleTimetable(passief, true)`) en wordt de huidige order "laden".
+  - Bij vertrek van de leider wordt de wachttijd verwerkt (`UpdateVehicleTimetable(passief, false)`), en gaat het stel door naar de volgende order.
+  - Er wordt niet echt geladen. Het passieve stel komt niet in de laadlijst van het station; laden per stel volgt in §7.
+- **Splitsen:** het afgesplitste stel komt normaal aan via `BeginLoading`. De reistijd sinds het vorige station is dan goed, omdat de tick doorliep.
+- **Vertrek:** de leider bepaalt wanneer de combinatie vertrekt. Vertrekt hij eerder of later dan de dienstregeling van het passieve stel zegt, dan telt dat als vroeg of te laat voor het passieve stel.
+- **Scheduled dispatch** werkt zonder extra code, omdat `UpdateVehicleTimetable` het slot opeist bij aankomst op een dispatch-order.
+- **Vertrekborden:** het passieve stel telt mee met zijn eigen orders, dienstregeling en vertraging, alsof het niet gekoppeld is. Ook als het passieve stel het eerste voertuig van zijn gedeelde orderlijst is, wordt die lijst meegenomen.
+
 **Controle bij het koppelen:** het station van de volgende `Splitsen`-order of stationsorder van het passieve stel moet voorkomen in de komende orders van de leider (één ronde vooruit). Zo niet, dan wordt er niet gekoppeld, want het stel zou nooit meer loskomen. De speler krijgt dan een nieuwsbericht.
 
 ### 3.5 Nieuwe conditionele variabele
@@ -177,7 +195,7 @@ struct TrainCoupling {
 
 - **Gedeelde orderlijst:** het passieve kopvoertuig blijft in `next_shared`, ook al is het geen voorste voertuig meer. Code die over gedeelde voertuigen loopt, moet hiermee overweg kunnen. Het gaat om afstand houden tussen treinen, vertrekborden, de lijst met gedeelde voertuigen en scheduled dispatch. Dat wordt nagelopen in fase 4, en blijft **het grootste risico** (§10).
 - **Slots en tellers:** een stel blijft lid van zijn slots, op basis van het `VehicleID` van zijn identiteit. Bij een identiteitswissel worden de slots meegewisseld (`TraceRestrictSwapVehicleOccupantInAllSlots`).
-- **Tick:** in fase 4 gaat de leider bij elke tick ook `current_order_time` van het passieve stel verhogen.
+- **Tick:** de leider verhoogt bij elke tick ook `current_order_time` van het passieve stel (§3.4a).
 - **Op `Train`:**
   - vlag `VehicleRailFlag::CoupledCombination` (kop van de combinatie);
   - vlag `VehicleRailFlag::CoupledPassiveHead` (kop van het passieve stel);
