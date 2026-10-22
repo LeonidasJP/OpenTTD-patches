@@ -166,6 +166,11 @@ static ChangeInfoResult RailTypeChangeInfo(uint first, uint last, int prop, cons
 				rti->ctrl_flags.Set(RailTypeCtrlFlag::SigSpriteRestrictedSig, buf.ReadByte() != 0);
 				break;
 
+			case A0RPI_RAILTYPE_ENABLE_COUPLING_ASPECT:
+				if (MappedPropertyLengthMismatch(buf, 1, mapping_entry)) break;
+				rti->ctrl_flags.Set(RailTypeCtrlFlag::SigSpriteCouplingAspect, buf.ReadByte() != 0);
+				break;
+
 			case A0RPI_RAILTYPE_DISABLE_REALISTIC_BRAKING:
 				if (MappedPropertyLengthMismatch(buf, 1, mapping_entry)) break;
 				rti->ctrl_flags.Set(RailTypeCtrlFlag::NoRealisticBraking, buf.ReadByte() != 0);

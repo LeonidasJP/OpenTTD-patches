@@ -570,6 +570,7 @@ enum CustomSignalSpriteContextFlags : uint8_t {
 	CSSCF_NONE                          = 0,
 	CSSCF_TUNNEL                        = 1 << 0,
 	CSSCF_SECOND_SIGNAL                 = 1 << 1,
+	CSSCF_COUPLING_ASPECT               = 1 << 2, ///< The signal allows a train to drive into an occupied platform to couple, see HasSignalCouplingAspect.
 };
 DECLARE_ENUM_AS_BIT_SET(CustomSignalSpriteContextFlags)
 

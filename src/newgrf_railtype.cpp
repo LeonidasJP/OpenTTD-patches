@@ -206,9 +206,15 @@ static PalSpriteID GetRailTypeCustomSignalSprite(const RailTypeInfo *rti, TileIn
 	if (type == SignalType::Prog && !rti->ctrl_flags.Test(RailTypeCtrlFlag::SigSpriteProgSig)) return { 0, PAL_NONE };
 	if (type == SignalType::NoEntry && !rti->ctrl_flags.Test(RailTypeCtrlFlag::SigSpriteNoEntry)) return { 0, PAL_NONE };
 
+	/* A signal which allows coupling shows "caution" if the GRF does not know the coupling aspect. */
+	const bool coupling = (context.ctx_flags & CSSCF_COUPLING_ASPECT) != 0;
+	const bool coupling_supported = rti->ctrl_flags.Test(RailTypeCtrlFlag::SigSpriteCouplingAspect);
+	if (coupling && !coupling_supported && aspect != 0) aspect = 1;
+
 	uint32_t param1 = (context.ctx_mode == CSSC_GUI) ? 0x10 : 0x00;
 	uint32_t param2 = (to_underlying(type) << 16) | (to_underlying(var) << 8) | RemapAspect(aspect, rti->signal_extra_aspects, 0);
 	if ((prog != nullptr) && rti->ctrl_flags.Test(RailTypeCtrlFlag::SigSpriteRestrictedSig)) SetBit(param2, 24);
+	if (coupling && coupling_supported) SetBit(param2, 25);
 	RailTypeResolverObject object(rti, tile, TileContext::Normal, RailSpriteType::Signals, param1, param2, context, prog, z);
 
 	const ResultSpriteGroup *group = object.Resolve<ResultSpriteGroup>();
@@ -245,9 +251,15 @@ CustomSignalSpriteResult GetCustomSignalSprite(const RailTypeInfo *rti, TileInde
 		}
 		if (!HasBit(grf->new_signal_style_mask, style)) continue;
 
+		/* A signal which allows coupling shows "caution" if the GRF does not know the coupling aspect. */
+		const bool coupling = (context.ctx_flags & CSSCF_COUPLING_ASPECT) != 0;
+		const bool coupling_supported = HasBit(grf->new_signal_ctrl_flags, NSCF_COUPLINGSIG);
+		const uint8_t grf_aspect = (coupling && !coupling_supported && aspect != 0) ? 1 : aspect;
+
 		uint32_t param1 = (context.ctx_mode == CSSC_GUI) ? 0x10 : 0x00;
-		uint32_t param2 = (to_underlying(type) << 16) | (to_underlying(var) << 8) | RemapAspect(aspect, grf->new_signal_extra_aspects, style);
+		uint32_t param2 = (to_underlying(type) << 16) | (to_underlying(var) << 8) | RemapAspect(grf_aspect, grf->new_signal_extra_aspects, style);
 		if ((prog != nullptr) && HasBit(grf->new_signal_ctrl_flags, NSCF_RESTRICTEDSIG)) SetBit(param2, 24);
+		if (coupling && coupling_supported) SetBit(param2, 25);
 		NewSignalsResolverObject object(grf, tile, TileContext::Normal, param1, param2, context, style, prog, z);
 
 		const ResultSpriteGroup *group = object.Resolve<ResultSpriteGroup>();
