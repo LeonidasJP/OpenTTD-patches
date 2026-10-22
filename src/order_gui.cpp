@@ -46,6 +46,9 @@
 
 #include "widgets/order_widget.h"
 
+#include "train.h"
+#include "train_coupling.h"
+
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -77,9 +80,57 @@ static const uint32_t _cargo_type_unload_order_dropdown_hidden_mask = 0x8; // 01
 
 DropDownList GetSlotDropDownList(Owner owner, TraceRestrictSlotID slot_id, int &selected, VehicleType vehtype, bool show_other_types);
 DropDownList GetSlotGroupDropDownList(Owner owner, TraceRestrictSlotGroupID slot_group_id, int &selected, VehicleType vehtype);
+DropDownList GetGroupDropDownList(Owner owner, GroupID group_id, int &selected, bool include_default = true, int value_offset = 0);
 DropDownList GetCounterDropDownList(Owner owner, TraceRestrictCounterID ctr_id, int &selected);
 
 StringID GetSlotGroupWarning(TraceRestrictSlotGroupID slot_group, Owner owner);
+
+/**
+ * Append the coupling action of a station order to the order text.
+ * @param line The order text.
+ * @param order The order.
+ */
+static void AppendOrderCouplingString(format_target &line, const Order *order)
+{
+	switch (order->GetCouplingMode()) {
+		case OrderCouplingMode::Split:
+			AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT);
+			break;
+
+		case OrderCouplingMode::Couple: {
+			const StringID leader = order->IsCouplingArrivingLeads() ? STR_ORDER_COUPLING_ARRIVING_LEADS : STR_EMPTY;
+			switch (order->GetCouplingFilter()) {
+				case OrderCouplingFilter::Group: {
+					const GroupID group = GroupID(order->GetCouplingFilterID());
+					if (Group::IsValidID(group)) {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_GROUP, group, leader);
+					} else {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_UNDEFINED, leader);
+					}
+					break;
+				}
+
+				case OrderCouplingFilter::OrderList: {
+					const OrderList *list = OrderList::GetIfValid(OrderListID(order->GetCouplingFilterID()));
+					if (list != nullptr && list->GetFirstSharedVehicle() != nullptr) {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_ORDERLIST, list->GetFirstSharedVehicle()->index, leader);
+					} else {
+						AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_UNDEFINED, leader);
+					}
+					break;
+				}
+
+				default:
+					AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_ANY, leader);
+					break;
+			}
+			break;
+		}
+
+		default:
+			break;
+	}
+}
 
 static bool ModifyOrder(const Vehicle *v, VehicleOrderID order_id, ModifyOrderFlags mof, uint16_t data, bool error_msg = true)
 {
@@ -626,6 +677,7 @@ static const OrderConditionVariable _order_conditional_variable[] = {
 	OrderConditionVariable::DispatchSlot,
 	OrderConditionVariable::Percent,
 	OrderConditionVariable::DrivingBackwards,
+	OrderConditionVariable::CouplingRole,
 	OrderConditionVariable::Unconditionally,
 };
 
@@ -812,7 +864,8 @@ StringID OrderStringForVariable(const Vehicle *v, OrderConditionVariable ocv)
 		STR_ORDER_CONDITIONAL_DISPATCH_SLOT,
 		STR_ORDER_CONDITIONAL_CARGO_WAITING_AMOUNT_PERCENTAGE,
 		STR_ORDER_CONDITIONAL_TRAIN_IN_SLOT_GROUP,
-		STR_ORDER_CONDITIONAL_DRIVING_BACKWARDS
+		STR_ORDER_CONDITIONAL_DRIVING_BACKWARDS,
+		STR_ORDER_CONDITIONAL_COUPLING_ROLE,
 	};
 	return ocv_names[to_underlying(ocv)];
 }
@@ -838,13 +891,15 @@ static StringID GetDepotOrderGoToString(const Order &order)
  * @param middle X position between order index and order text
  * @param right Right border for text drawing
  */
-void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int y, bool selected, bool timetable, int left, int middle, int right)
+void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int y, bool selected, bool timetable, int left, int middle, int right, bool mirrored)
 {
 	bool rtl = _current_text_dir == TD_RTL;
 
 	SpriteID sprite = rtl ? SPR_ARROW_LEFT : SPR_ARROW_RIGHT;
 	Dimension sprite_size = GetSpriteSize(sprite);
-	if (v->cur_real_order_index == order_index) {
+	if (mirrored) {
+		/* An order of the leading train of a coupled combination, shown in the orders of the passive train: no index or arrows. */
+	} else if (v->cur_real_order_index == order_index) {
 		/* Draw two arrows before the next real order. */
 		DrawSprite(sprite, PAL_NONE, rtl ? right -     sprite_size.width : left,                     y + ((int)GetCharacterHeight(FontSize::Normal) - (int)sprite_size.height) / 2);
 		DrawSprite(sprite, PAL_NONE, rtl ? right - 2 * sprite_size.width : left + sprite_size.width, y + ((int)GetCharacterHeight(FontSize::Normal) - (int)sprite_size.height) / 2);
@@ -854,7 +909,9 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 	}
 
 	ExtendedTextColour colour{TextColour::Black};
-	if (order->IsType(OT_IMPLICIT)) {
+	if (mirrored) {
+		colour = ExtendedTextColour{TextColour::Grey, ExtendedTextColourFlag::NoShade};
+	} else if (order->IsType(OT_IMPLICIT)) {
 		colour = ExtendedTextColour{selected ? TextColour::Silver : TextColour::Grey, ExtendedTextColourFlag::NoShade};
 	} else {
 		if (selected) {
@@ -865,7 +922,7 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 		}
 	}
 
-	DrawString(left, rtl ? right - 2 * sprite_size.width - 3 : middle, y, GetString(STR_ORDER_INDEX, order_index + 1), colour, AlignmentH::ForceRight);
+	if (!mirrored) DrawString(left, rtl ? right - 2 * sprite_size.width - 3 : middle, y, GetString(STR_ORDER_INDEX, order_index + 1), colour, AlignmentH::ForceRight);
 
 	bool timetable_wait_time_valid = false;
 	format_buffer line;
@@ -915,6 +972,7 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 						AppendStringInPlace(line, STR_ORDER_STOP_LOCATION_NEAR_END + to_underlying(order->GetStopLocation()));
 					}
 				}
+				if (v->type == VehicleType::Train) AppendOrderCouplingString(line, order);
 				if (v->type == VehicleType::Road && order->GetRoadVehTravelDirection() != DiagDirection::Invalid) {
 					line.push_back(' ');
 					AppendStringInPlace(line, STR_ORDER_RV_DIR_NE + to_underlying(order->GetRoadVehTravelDirection()));
@@ -959,6 +1017,10 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 			/* Show unbunching depot in both order and timetable windows. */
 			if (order->GetDepotActionType() & ODATFB_UNBUNCH) {
 				AppendStringInPlace(line, STR_ORDER_WAIT_TO_UNBUNCH);
+			}
+
+			if (!timetable && order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) {
+				AppendStringInPlace(line, STR_ORDER_DEPOT_COUPLED_ALLOWED);
 			}
 			break;
 
@@ -1238,9 +1300,12 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 				if (ocv == OrderConditionVariable::MaxSpeed) {
 					value = ConvertSpeedToDisplaySpeed(value, v->type);
 				}
+				StringID variable_str = OrderStringForVariable(v, ocv);
+				if (ocv == OrderConditionVariable::FreePlatforms) variable_str = STR_ORDER_CONDITIONAL_NEXT_STATION;
+				if (ocv == OrderConditionVariable::CouplingRole) variable_str = STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + std::min<uint>(value, to_underlying(OrderCouplingRole::End) - 1);
 				AppendStringInPlace(line, (occ == OrderConditionComparator::IsTrue || occ == OrderConditionComparator::IsFalse) ? STR_ORDER_CONDITIONAL_TRUE_FALSE : STR_ORDER_CONDITIONAL_NUM,
 						order->GetConditionSkipToOrder() + 1,
-						(ocv == OrderConditionVariable::FreePlatforms) ? STR_ORDER_CONDITIONAL_NEXT_STATION : OrderStringForVariable(v, ocv),
+						variable_str,
 						STR_ORDER_CONDITIONAL_COMPARATOR_EQUALS + to_underlying(occ),
 						value);
 			}
@@ -1565,6 +1630,7 @@ private:
 		OPOS_COND_STATION,
 		OPOS_CONDITIONAL_RETARGET,
 		OPOS_DEPARTURE_VIA,
+		OPOS_COUPLING_ORDERLIST,
 		OPOS_END,
 	};
 
@@ -1642,6 +1708,9 @@ private:
 
 	int selected_order = -1;
 	VehicleOrderID order_over = INVALID_VEH_ORDER_ID; ///< Order over which another order is dragged, \c INVALID_VEH_ORDER_ID if none.
+	const Train *mirror_leader = nullptr;             ///< Head of the combination when this is a coupled passive train, see #mirror_orders.
+	std::vector<VehicleOrderID> mirror_orders;        ///< Orders of the leading train shown (greyed) before the current order of a coupled passive train.
+	VehicleOrderID mirror_pos = INVALID_VEH_ORDER_ID; ///< Order before which #mirror_orders are shown, \c INVALID_VEH_ORDER_ID if none.
 	OrderPlaceObjectState goto_type = OPOS_NONE;
 	Scrollbar *vscroll = nullptr;
 	bool can_do_refit = false;     ///< Vehicle chain can be refitted in depot.
@@ -1678,8 +1747,50 @@ private:
 		int32_t sel = this->vscroll->GetScrolledRowFromWidget(y, this, WID_O_ORDER_LIST, WidgetDimensions::scaled.framerect.top);
 		if (sel == INT32_MAX) return INVALID_VEH_ORDER_ID;
 		/* One past the orders is the 'End of Orders' line. */
-		assert(IsInsideBS(sel, 0, vehicle->GetNumOrders() + 1));
-		return sel;
+		if (!IsInsideBS(sel, 0, this->GetRowCount())) return INVALID_VEH_ORDER_ID;
+		/* The mirrored orders of the leading train can not be selected. */
+		if (this->GetMirroredOrderOfRow(sel) != nullptr) return INVALID_VEH_ORDER_ID;
+		return this->RowToOrder(sel);
+	}
+
+	/** Update the orders of the leading train which are shown in the orders of a coupled passive train. */
+	void UpdateMirroredOrders()
+	{
+		this->mirror_orders.clear();
+		this->mirror_pos = INVALID_VEH_ORDER_ID;
+		this->mirror_leader = nullptr;
+		if (this->vehicle->type != VehicleType::Train) return;
+		this->mirror_orders = GetMirroredCouplingOrders(Train::From(this->vehicle), &this->mirror_leader);
+		if (!this->mirror_orders.empty()) this->mirror_pos = this->vehicle->cur_real_order_index;
+	}
+
+	/** Number of rows in the order list, including the mirrored orders and the 'End of Orders' line. */
+	int GetRowCount() const
+	{
+		return this->vehicle->GetNumOrders() + 1 + (int)this->mirror_orders.size();
+	}
+
+	/** Row of an order (or the 'End of Orders' line) in the order list. */
+	int OrderToRow(VehicleOrderID order) const
+	{
+		if (this->mirror_pos != INVALID_VEH_ORDER_ID && order != INVALID_VEH_ORDER_ID && order >= this->mirror_pos) return order + (int)this->mirror_orders.size();
+		return order;
+	}
+
+	/** Order (or the 'End of Orders' line) in a row of the order list, rows of mirrored orders give the order which follows them. */
+	VehicleOrderID RowToOrder(int row) const
+	{
+		if (this->mirror_pos == INVALID_VEH_ORDER_ID || row < this->mirror_pos) return row;
+		return std::max<int>(this->mirror_pos, row - (int)this->mirror_orders.size());
+	}
+
+	/** Mirrored order of the leading train in a row of the order list, nullptr if the row shows an order of this vehicle. */
+	const Order *GetMirroredOrderOfRow(int row, VehicleOrderID *leader_index = nullptr) const
+	{
+		if (this->mirror_pos == INVALID_VEH_ORDER_ID || row < this->mirror_pos || row >= this->mirror_pos + (int)this->mirror_orders.size()) return nullptr;
+		const VehicleOrderID index = this->mirror_orders[row - this->mirror_pos];
+		if (leader_index != nullptr) *leader_index = index;
+		return this->mirror_leader->GetOrder(index);
 	}
 
 	/**
@@ -1755,6 +1866,7 @@ private:
 			HT_RECT,              // OPOS_COND_STATION
 			HT_NONE,              // OPOS_CONDITIONAL_RETARGET
 			HT_RECT,              // OPOS_DEPARTURE_VIA
+			HT_VEHICLE,           // OPOS_COUPLING_ORDERLIST
 		};
 		SetObjectToPlaceWnd(ANIMCURSOR_PICKSTATION, PAL_NONE, goto_place_style[type - 1], this);
 		this->goto_type = type;
@@ -1799,7 +1911,21 @@ private:
 			if (order == nullptr) return;
 			i = (order->GetDepotOrderType().Test(OrderDepotTypeFlag::Service)) ? DA_ALWAYS_GO : DA_SERVICE;
 		}
+		if (i == DA_STOP || i == DA_SELL) {
+			const Order *order = this->vehicle->GetOrder(sel_ord);
+			if (order != nullptr && !order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) this->WarnCoupledDepotStop();
+		}
 		this->ModifyOrder(sel_ord, MOF_DEPOT_ACTION, i);
+	}
+
+	/**
+	 * Warn that a depot order will make a coupled combination stop in the depot.
+	 * The order is changed anyway.
+	 */
+	void WarnCoupledDepotStop()
+	{
+		if (!IsOrderListUsedByCombination(this->vehicle)) return;
+		ShowErrorMessage(GetEncodedString(STR_WARNING_TRAIN_COUPLING_DEPOT_STOP), GetEncodedString(STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL), WarningLevel::Warning);
 	}
 
 	/**
@@ -2204,7 +2330,8 @@ public:
 				break;
 		}
 
-		this->vscroll->SetCount(this->vehicle->GetNumOrders() + 1);
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
 		if (gui_scope) {
 			this->UpdateButtonState();
 			InvalidateWindowClassesData(WindowClass::VehicleCargoTypeLoadOrders, 0);
@@ -2241,8 +2368,8 @@ public:
 		this->selected_order = to;
 
 		/* Scroll to the new order. */
-		if (from == INVALID_VEH_ORDER_ID && to != INVALID_VEH_ORDER_ID && !this->vscroll->IsVisible(to)) {
-			this->vscroll->ScrollTowards(to);
+		if (from == INVALID_VEH_ORDER_ID && to != INVALID_VEH_ORDER_ID && !this->vscroll->IsVisible(this->OrderToRow(to))) {
+			this->vscroll->ScrollTowards(this->OrderToRow(to));
 		}
 	}
 
@@ -2265,7 +2392,7 @@ public:
 
 		/* Second row. */
 		/* skip */
-		this->SetWidgetDisabledState(WID_O_SKIP, this->vehicle->GetNumOrders() <= 1);
+		this->SetWidgetDisabledState(WID_O_SKIP, this->vehicle->GetNumOrders() <= 1 || IsCoupledPassiveTrain(this->vehicle));
 
 		/* delete / stop sharing */
 		NWidgetStacked *delete_sel = this->GetWidget<NWidgetStacked>(WID_O_SEL_BOTTOM_MIDDLE);
@@ -2596,14 +2723,18 @@ public:
 
 	void OnPaint() override
 	{
+		/* The mirrored orders of a coupled passive train follow the progress of the combination. */
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
+
 		if (this->vehicle->owner != _local_company) {
 			this->selected_order = -1; // Disable selection any selected row at a competitor order window.
 		} else {
 			this->SetWidgetLoweredState(WID_O_GOTO, this->goto_type != OPOS_NONE && this->goto_type != OPOS_COND_VIA
-					&& this->goto_type != OPOS_COND_STATION && this->goto_type != OPOS_CONDITIONAL_RETARGET);
+					&& this->goto_type != OPOS_COND_STATION && this->goto_type != OPOS_CONDITIONAL_RETARGET && this->goto_type != OPOS_COUPLING_ORDERLIST);
 			this->SetWidgetLoweredState(WID_O_COND_AUX_VIA, this->goto_type == OPOS_COND_VIA);
 			this->SetWidgetLoweredState(WID_O_COND_AUX_STATION, this->goto_type == OPOS_COND_STATION);
-			this->SetWidgetLoweredState(WID_O_MGMT_BTN, this->goto_type == OPOS_CONDITIONAL_RETARGET);
+			this->SetWidgetLoweredState(WID_O_MGMT_BTN, this->goto_type == OPOS_CONDITIONAL_RETARGET || this->goto_type == OPOS_COUPLING_ORDERLIST);
 		}
 		this->DrawWidgets();
 	}
@@ -2636,49 +2767,48 @@ public:
 		int y = ir.top;
 		int line_height = this->GetWidget<NWidgetBase>(WID_O_ORDER_LIST)->resize_y;
 
-		int i = this->vscroll->GetPosition();
-		const Order *order = this->vehicle->GetOrder(i);
+		const int num_rows = this->GetRowCount();
+		const int selected_row = this->selected_order >= 0 ? this->OrderToRow(this->selected_order) : -1;
+
 		/* First draw the highlighting underground if it exists. */
 		if (this->order_over != INVALID_VEH_ORDER_ID) {
-			while (order != nullptr) {
-				/* Don't draw anything if it extends past the end of the window. */
-				if (!this->vscroll->IsVisible(i)) break;
-
-				if (i != this->selected_order && i == this->order_over) {
+			const int over_row = this->OrderToRow(this->order_over);
+			for (int row = this->vscroll->GetPosition(); row < num_rows - 1 && this->vscroll->IsVisible(row); row++) {
+				if (row != selected_row && row == over_row) {
 					/* Highlight dragged order destination. */
-					int top = (this->order_over < this->selected_order ? y : y + line_height) - WidgetDimensions::scaled.framerect.top;
+					int top = (over_row < selected_row ? y : y + line_height) - WidgetDimensions::scaled.framerect.top;
 					int bottom = std::min(top + 2, ir.bottom);
 					top = std::max(top - 3, ir.top);
 					GfxFillRect(ir.left, top, ir.right, bottom, GetColourGradient(Colours::Grey, Shade::Lightest));
 					break;
 				}
 				y += line_height;
-
-				i++;
-				order = this->vehicle->orders->GetNextNoWrap(order);
 			}
 
 			/* Reset counters for drawing the orders. */
 			y = ir.top;
-			i = this->vscroll->GetPosition();
-			order = this->vehicle->GetOrder(i);
 		}
 
 		/* Draw the orders. */
-		while (order != nullptr) {
+		int row = this->vscroll->GetPosition();
+		for (; row < num_rows - 1; row++) {
 			/* Don't draw anything if it extends past the end of the window. */
-			if (!this->vscroll->IsVisible(i)) break;
+			if (!this->vscroll->IsVisible(row)) break;
 
-			DrawOrderString(this->vehicle, order, i, y, i == this->selected_order, false, ir.left, middle, ir.right);
+			VehicleOrderID leader_index;
+			const Order *mirrored = this->GetMirroredOrderOfRow(row, &leader_index);
+			if (mirrored != nullptr) {
+				DrawOrderString(this->mirror_leader, mirrored, leader_index, y, false, false, ir.left, middle, ir.right, true);
+			} else {
+				const VehicleOrderID i = this->RowToOrder(row);
+				DrawOrderString(this->vehicle, this->vehicle->GetOrder(i), i, y, i == this->selected_order, false, ir.left, middle, ir.right);
+			}
 			y += line_height;
-
-			i++;
-			order = this->vehicle->orders->GetNextNoWrap(order);
 		}
 
-		if (this->vscroll->IsVisible(i)) {
+		if (row == num_rows - 1 && this->vscroll->IsVisible(row)) {
 			StringID str = this->vehicle->IsOrderListShared() ? STR_ORDERS_END_OF_SHARED_ORDERS : STR_ORDERS_END_OF_ORDERS;
-			DrawString(rtl ? ir.left : middle, rtl ? middle : ir.right, y, str, (i == this->selected_order) ? TextColour::White : TextColour::Black);
+			DrawString(rtl ? ir.left : middle, rtl ? middle : ir.right, y, str, (row == selected_row) ? TextColour::White : TextColour::Black);
 		}
 	}
 
@@ -2688,13 +2818,17 @@ public:
 		int y = ir.top;
 		int line_height = this->GetWidget<NWidgetBase>(WID_O_ORDER_LIST)->resize_y;
 
-		int i = this->vscroll->GetPosition();
+		int row = this->vscroll->GetPosition();
 
 		/* Draw the orders. */
-		while (i < this->vehicle->GetNumOrders()) {
+		for (; row < this->GetRowCount() - 1; row++, y += line_height) {
 			/* Don't draw anything if it extends past the end of the window. */
-			if (!this->vscroll->IsVisible(i)) break;
+			if (!this->vscroll->IsVisible(row)) break;
 
+			/* No occupancy for the mirrored orders of the leading train. */
+			if (this->GetMirroredOrderOfRow(row) != nullptr) continue;
+
+			const VehicleOrderID i = this->RowToOrder(row);
 			const Order *order = this->vehicle->GetOrder(i);
 
 			uint8_t occupancy = order->GetOccupancy();
@@ -2707,9 +2841,6 @@ public:
 				}
 				DrawString(ir.left, ir.right, y, GetString(STR_ORDERS_OCCUPANCY_PERCENT, occupancy - 1), colour);
 			}
-			y += line_height;
-
-			i++;
 		}
 	}
 
@@ -2745,6 +2876,9 @@ public:
 				const Order *order = this->vehicle->GetOrder(sel);
 
 				if (order != nullptr && order->IsType(OT_CONDITIONAL)) {
+					if (order->GetConditionVariable() == OrderConditionVariable::CouplingRole) {
+						return GetString(STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + std::min<uint>(order->GetConditionValue(), to_underlying(OrderCouplingRole::End) - 1));
+					}
 					uint value;
 					switch (order->GetConditionVariable()) {
 						case OrderConditionVariable::CargoLoadPercentage:
@@ -3102,6 +3236,28 @@ public:
 						}
 						list.push_back(MakeDropDownListCheckedItem(osl == OrderStopLocation::Through, STR_ORDER_STOP_LOCATION_THROUGH, 0x200 + to_underlying(OrderStopLocation::Through), !allowed));
 					}
+
+					const OrderCouplingMode mode = order->GetCouplingMode();
+					list.push_back(MakeDropDownListDividerItem());
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::None, STR_ORDER_COUPLING_MODE_NONE, 0x500 + to_underlying(OrderCouplingMode::None), false));
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::Couple, STR_ORDER_COUPLING_MODE_COUPLE, 0x500 + to_underlying(OrderCouplingMode::Couple), false));
+					list.push_back(MakeDropDownListCheckedItem(mode == OrderCouplingMode::Split, STR_ORDER_COUPLING_MODE_SPLIT, 0x500 + to_underlying(OrderCouplingMode::Split), false));
+					if (mode == OrderCouplingMode::Couple) {
+						const bool arriving = order->IsCouplingArrivingLeads();
+						const OrderCouplingFilter filter = order->GetCouplingFilter();
+						list.push_back(MakeDropDownListDividerItem());
+						list.push_back(MakeDropDownListCheckedItem(!arriving, STR_ORDER_COUPLING_LEADER_WAITING, 0x600, false));
+						list.push_back(MakeDropDownListCheckedItem(arriving, STR_ORDER_COUPLING_LEADER_ARRIVING, 0x601, false));
+						list.push_back(MakeDropDownListDividerItem());
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Any, STR_ORDER_COUPLING_FILTER_ANY, 0x700 + to_underlying(OrderCouplingFilter::Any), false));
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Group, STR_ORDER_COUPLING_FILTER_GROUP, 0x700 + to_underlying(OrderCouplingFilter::Group), false));
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::OrderList, STR_ORDER_COUPLING_FILTER_ORDERLIST, 0x700 + to_underlying(OrderCouplingFilter::OrderList), false));
+					}
+				}
+
+				if (this->vehicle->type == VehicleType::Train && order->IsType(OT_GOTO_DEPOT)) {
+					list.push_back(MakeDropDownListDividerItem());
+					list.push_back(MakeDropDownListCheckedItem(order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed), STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU, 0x800, false));
 				}
 
 				if (this->vehicle->type == VehicleType::Road && (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT))) {
@@ -3173,6 +3329,7 @@ public:
 						case OPOS_SHARE:                sel = ODDI_SHARE; break;
 						case OPOS_INSERT_FROM_VEHICLE:  sel = ODDI_INSERT_FROM_VEHICLE; break;
 						case OPOS_CONDITIONAL_RETARGET: sel = -1; break;
+						case OPOS_COUPLING_ORDERLIST:   sel = -1; break;
 						case OPOS_DEPARTURE_VIA:        sel = ODDI_LABEL_DEPARTURES_VIA; break;
 						default: NOT_REACHED();
 					}
@@ -3402,7 +3559,7 @@ public:
 				const OrderConditionVariable current_ocv = this->vehicle->GetOrder(this->OrderGetSel())->GetConditionVariable();
 				DropDownList list;
 				for (const auto &ocv : _order_conditional_variable) {
-					if (this->vehicle->type != VehicleType::Train && (ocv == OrderConditionVariable::FreePlatforms || ocv == OrderConditionVariable::DrivingBackwards)) {
+					if (this->vehicle->type != VehicleType::Train && (ocv == OrderConditionVariable::FreePlatforms || ocv == OrderConditionVariable::DrivingBackwards || ocv == OrderConditionVariable::CouplingRole)) {
 						continue;
 					}
 					if (current_ocv != ocv) {
@@ -3474,6 +3631,7 @@ public:
 					case OrderConditionVariable::VehicleInSlotGroup:
 					case OrderConditionVariable::DispatchSlot:
 					case OrderConditionVariable::DrivingBackwards:
+					case OrderConditionVariable::CouplingRole:
 						mask = 0x3F;
 						break;
 
@@ -3496,6 +3654,14 @@ public:
 
 			case WID_O_COND_VALUE: {
 				const Order *order = this->vehicle->GetOrder(this->OrderGetSel());
+				if (order->GetConditionVariable() == OrderConditionVariable::CouplingRole) {
+					DropDownList list;
+					for (uint role = 0; role < to_underlying(OrderCouplingRole::End); role++) {
+						list.push_back(MakeDropDownListStringItem(STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED + role, role, false));
+					}
+					ShowDropDownList(this, std::move(list), order->GetConditionValue(), WID_O_COND_VALUE, 0, DropDownOptions{}, DDSF_SHARED);
+					break;
+				}
 				uint value;
 				CharSetFilter charset_filter = CS_NUMERAL;
 				switch (order->GetConditionVariable()) {
@@ -3765,6 +3931,10 @@ public:
 				this->ModifyOrder(this->OrderGetSel(), MOF_COND_VARIABLE, index);
 				break;
 
+			case WID_O_COND_VALUE:
+				this->ModifyOrder(this->OrderGetSel(), MOF_COND_VALUE, index);
+				break;
+
 			case WID_O_COND_COMPARATOR: {
 				const Order *o = this->vehicle->GetOrder(this->OrderGetSel());
 				if (o == nullptr) return;
@@ -3932,8 +4102,57 @@ public:
 				break;
 
 			case WID_O_MGMT_BTN:
-				if (this->goto_type == OPOS_CONDITIONAL_RETARGET) {
+				if (this->goto_type == OPOS_CONDITIONAL_RETARGET || this->goto_type == OPOS_COUPLING_ORDERLIST) {
 					ResetObjectToPlace();
+					break;
+				}
+				if (index >= 0x10000) {
+					/* Group of the coupling filter selected */
+					const VehicleOrderID sel = this->OrderGetSel();
+					this->ModifyOrder(sel, MOF_COUPLING_FILTER, to_underlying(OrderCouplingFilter::Group));
+					this->ModifyOrder(sel, MOF_COUPLING_FILTER_ID, index - 0x10000);
+					break;
+				}
+				if (index >= 0x500 && index < 0x500 + to_underlying(OrderCouplingMode::End)) {
+					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_MODE, index & 0xFF);
+					break;
+				}
+				if (index == 0x600 || index == 0x601) {
+					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_LEADER, index & 0xFF);
+					break;
+				}
+				if (index == 0x800) {
+					const VehicleOrderID sel = this->OrderGetSel();
+					const Order *order = this->vehicle->GetOrder(sel);
+					if (order == nullptr) break;
+					const bool allowed = !order->GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed);
+					if (!allowed && (order->GetDepotActionType() & ODATFB_HALT) != 0) this->WarnCoupledDepotStop();
+					this->ModifyOrder(sel, MOF_DEPOT_COUPLED_ALLOWED, allowed ? 1 : 0);
+					break;
+				}
+				if (index >= 0x700 && index < 0x700 + to_underlying(OrderCouplingFilter::End)) {
+					switch (static_cast<OrderCouplingFilter>(index & 0xFF)) {
+						case OrderCouplingFilter::Group: {
+							const Order *order = this->vehicle->GetOrder(this->OrderGetSel());
+							GroupID current = (order != nullptr && order->GetCouplingFilter() == OrderCouplingFilter::Group) ? GroupID(order->GetCouplingFilterID()) : GroupID::Invalid();
+							int selected;
+							DropDownList list = GetGroupDropDownList(this->vehicle->owner, current, selected, false, 0x10000);
+							if (list.empty()) {
+								ShowErrorMessage(GetEncodedString(STR_ERROR_CAN_T_MODIFY_THIS_ORDER), GetEncodedString(STR_ERROR_TRAIN_COUPLING_NO_GROUPS), WarningLevel::Info);
+								break;
+							}
+							ShowDropDownList(this, std::move(list), selected, WID_O_MGMT_BTN, 0, DropDownOptions{}, DDSF_SHARED);
+							break;
+						}
+
+						case OrderCouplingFilter::OrderList:
+							this->OrderClick_Goto(OPOS_COUPLING_ORDERLIST);
+							break;
+
+						default:
+							this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_FILTER, index & 0xFF);
+							break;
+					}
 					break;
 				}
 				if (index >= 0x100 && index <= 0x100 + to_underlying(Colours::Invalid)) {
@@ -4089,6 +4308,19 @@ public:
 
 	bool OnVehicleSelect(const Vehicle *v) override
 	{
+		if (this->goto_type == OPOS_COUPLING_ORDERLIST) {
+			v = v->First();
+			if (v->type != VehicleType::Train || v->owner != this->vehicle->owner || v->orders == nullptr) {
+				ShowErrorMessage(GetEncodedString(STR_ERROR_CAN_T_MODIFY_THIS_ORDER), GetEncodedString(STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST), WarningLevel::Info);
+				return true;
+			}
+			const VehicleOrderID sel = this->OrderGetSel();
+			this->ModifyOrder(sel, MOF_COUPLING_FILTER, to_underlying(OrderCouplingFilter::OrderList));
+			this->ModifyOrder(sel, MOF_COUPLING_FILTER_ID, v->orders->index.base());
+			ResetObjectToPlace();
+			return true;
+		}
+
 		if (this->goto_type == OPOS_INSERT_FROM_VEHICLE) {
 			if (Command<Commands::InsertOrdersFromVeh>::Post(STR_ERROR_CAN_T_COPY_ORDER_LIST, CommandCallback::InsertOrdersFromVehicle, this->vehicle->tile, this->vehicle->index, v->index, this->OrderGetSel())) {
 				this->selected_order = -1;
@@ -4221,8 +4453,9 @@ public:
 
 	void ScrollTowardsOrder(VehicleOrderID order_pos)
 	{
-		this->vscroll->SetCount(this->vehicle->GetNumOrders() + 1);
-		this->vscroll->ScrollTowards(order_pos);
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
+		this->vscroll->ScrollTowards(this->OrderToRow(order_pos));
 		this->SetDirty();
 	}
 

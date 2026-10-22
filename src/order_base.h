@@ -462,6 +462,14 @@ public:
 	inline OrderDepotActionFlags GetDepotActionType() const { return (OrderDepotActionFlags)GB(this->flags, 3, 4); }
 	/** Extra depot flags. */
 	inline OrderDepotExtraFlags GetDepotExtraFlags() const { return static_cast<OrderDepotExtraFlags>(GB(this->flags, 8, 8)); }
+	/** Coupling action at a station order. */
+	inline OrderCouplingMode GetCouplingMode() const { return this->IsType(OT_GOTO_STATION) ? static_cast<OrderCouplingMode>(GB(this->flags, 8, 2)) : OrderCouplingMode::None; }
+	/** Whether the arriving train leads the combination when coupling at a station order. */
+	inline bool IsCouplingArrivingLeads() const { return HasBit(this->flags, 10); }
+	/** Which trains may be coupled to at a station order. */
+	inline OrderCouplingFilter GetCouplingFilter() const { return static_cast<OrderCouplingFilter>(GB(this->GetXData2(), 0, 2)); }
+	/** The GroupID or OrderListID of the coupling filter. */
+	inline uint16_t GetCouplingFilterID() const { return this->GetXDataLow(); }
 	/** What waypoint flags? */
 	inline OrderWaypointFlags GetWaypointFlags() const { return static_cast<OrderWaypointFlags>(GB(this->flags, 0, 3)); }
 
@@ -567,6 +575,14 @@ public:
 	inline void SetDepotActionType(OrderDepotActionFlags depot_service_type) { SB(this->flags, 3, 4, depot_service_type); }
 	/** Set what we are going to do in the depot. */
 	inline void SetDepotExtraFlags(OrderDepotExtraFlags depot_extra_flags) { SB(this->flags, 8, 8, depot_extra_flags.base()); }
+	/** Set the coupling action at a station order. */
+	inline void SetCouplingMode(OrderCouplingMode mode) { SB(this->flags, 8, 2, to_underlying(mode)); }
+	/** Set whether the arriving train leads the combination when coupling at a station order. */
+	inline void SetCouplingArrivingLeads(bool arriving_leads) { AssignBit(this->flags, 10, arriving_leads); }
+	/** Set which trains may be coupled to at a station order. */
+	inline void SetCouplingFilter(OrderCouplingFilter filter) { SB(this->GetXData2Ref(), 0, 2, to_underlying(filter)); }
+	/** Set the GroupID or OrderListID of the coupling filter. */
+	inline void SetCouplingFilterID(uint16_t id) { this->SetXDataLow(id); }
 	/** Set waypoint flags. */
 	inline void SetWaypointFlags(OrderWaypointFlags waypoint_flags) { SB(this->flags, 0, 3, waypoint_flags.base()); }
 
@@ -1362,6 +1378,12 @@ public:
 	 * @return the first vehicle of the chain.
 	 */
 	inline Vehicle *GetFirstSharedVehicle() const { return this->first_shared; }
+
+	/**
+	 * Replace the first vehicle of the shared vehicle chain, without changing the number of vehicles.
+	 * @param v The new first vehicle of the chain.
+	 */
+	inline void ReplaceFirstSharedVehicle(Vehicle *v) { this->first_shared = v; }
 
 	/**
 	 * Return the number of vehicles that share this orders list

@@ -16,6 +16,8 @@
 #include "tracerestrict.h"
 #include "core/serialisation.hpp"
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 /**
@@ -144,12 +146,21 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		if (cid == CargoFilterCriteria::CF_ANY || VehicleCargoFilter(v, cid)) list->push_back(v);
 	};
 
+	/* The heads of passive trains in coupled combinations are not front vehicles, but are listed as if they were not coupled. */
+	auto add_coupled_passive_trains = [&](auto pred) {
+		if (vli.vtype != VehicleType::Train) return;
+		for (const Train *t : GetCoupledPassiveTrains()) {
+			if (t->owner == vli.company && pred(t)) add_veh(t);
+		}
+	};
+
 	auto fill_all_vehicles = [&]() {
 		for (const Vehicle *v : Vehicle::IterateTypeFrontOnly(vli.vtype)) {
 			if (!HasBit(v->subtype, GVSF_VIRTUAL) && v->owner == vli.company && v->IsPrimaryVehicle()) {
 				add_veh(v);
 			}
 		}
+		add_coupled_passive_trains([](const Train *) { return true; });
 	};
 
 	switch (vli.type) {
@@ -164,10 +175,10 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 		case VehicleListType::VehicleSharedOrders: {
 			/* Add all vehicles from this vehicle's shared order list */
 			const Vehicle *v = Vehicle::GetIfValid(vli.ToVehicleID());
-			if (v == nullptr || v->type != vli.vtype || !v->IsPrimaryVehicle()) return false;
+			if (v == nullptr || v->type != vli.vtype || !IsPrimaryOrCoupledPassiveVehicle(v)) return false;
 
-			for (; v != nullptr; v = v->NextShared()) {
-				add_veh(v);
+			for (v = v->FirstShared(); v != nullptr; v = v->NextShared()) {
+				if (IsPrimaryOrCoupledPassiveVehicle(v)) add_veh(v);
 			}
 			break;
 		}
@@ -180,6 +191,7 @@ bool GenerateVehicleSortList(VehicleList *list, const VehicleListIdentifier &vli
 						add_veh(v);
 					}
 				}
+				add_coupled_passive_trains([&vli](const Train *t) { return GroupIsInGroup(t->group_id, vli.ToGroupID()); });
 				break;
 			}
 			fill_all_vehicles();

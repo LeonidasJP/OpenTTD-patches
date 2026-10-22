@@ -121,6 +121,8 @@
 #	include <emscripten/html5.h>
 #endif
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 void CallLandscapeTick();
@@ -1613,6 +1615,7 @@ void StateGameLoop()
 				IncreaseCalendarDate();
 			}
 			AnimateAnimatedTiles();
+			AnimateCouplingSignals();
 			RunTileLoop(true);
 			CallVehicleTicks();
 			OnTick_Companies(false);
@@ -1620,6 +1623,7 @@ void StateGameLoop()
 			DateDetail::_tick_skip_counter = 0;
 			IncreaseDate();
 			AnimateAnimatedTiles();
+			AnimateCouplingSignals();
 			RunTileLoop(true);
 			CallVehicleTicks();
 			CallLandscapeTick();

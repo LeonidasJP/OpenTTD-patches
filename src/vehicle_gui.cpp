@@ -20,6 +20,8 @@
 #include "roadveh.h"
 #include "train.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
+#include "textbuf_gui.h"
 #include "aircraft.h"
 #include "depot_map.h"
 #include "group_cmd.h"
@@ -4134,20 +4136,23 @@ public:
 		bool can_control = IsVehicleControlAllowed(v, _local_company);
 		bool refittable_and_stopped_in_depot = IsVehicleRefittable(v);
 
+		/* The passive train of a coupled combination is controlled by the combination. */
+		const bool coupled_passive = IsCoupledPassiveTrain(v);
+
 		this->SetWidgetDisabledState(WID_VV_RENAME, !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_GOTO_DEPOT, !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_REFIT, !refittable_and_stopped_in_depot || !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_CLONE, !is_localcompany);
+		this->SetWidgetDisabledState(WID_VV_GOTO_DEPOT, !is_localcompany || coupled_passive);
+		this->SetWidgetDisabledState(WID_VV_REFIT, !refittable_and_stopped_in_depot || !is_localcompany || coupled_passive);
+		this->SetWidgetDisabledState(WID_VV_CLONE, !is_localcompany || coupled_passive);
 
 		this->UpdateDepotButton();
 
 		if (v->type == VehicleType::Train) {
 			this->SetWidgetLoweredState(WID_VV_FORCE_PROCEED, Train::From(v)->force_proceed == TFP_SIGNAL);
-			this->SetWidgetDisabledState(WID_VV_FORCE_PROCEED, !can_control);
+			this->SetWidgetDisabledState(WID_VV_FORCE_PROCEED, !can_control || coupled_passive);
 		}
 
 		if (v->type == VehicleType::Train || v->type == VehicleType::Road) {
-			this->SetWidgetDisabledState(WID_VV_TURN_AROUND, !can_control);
+			this->SetWidgetDisabledState(WID_VV_TURN_AROUND, !can_control || coupled_passive);
 		}
 
 		this->SetWidgetDisabledState(WID_VV_ORDER_LOCATION, v->current_order.GetLocation(v) == INVALID_TILE);
@@ -4236,6 +4241,10 @@ public:
 
 		if (v->vehstatus.Test(VehState::Crashed)) {
 			AppendStringInPlace(buffer, STR_VEHICLE_STATUS_CRASHED);
+		} else if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+			/* The passive train of a coupled combination follows the combination head. */
+			const Train *head = GetCouplingCombinationHead(Train::From(v));
+			if (head != nullptr) AppendStringInPlace(buffer, STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE, head->index);
 		} else if ((v->breakdown_ctr == 1 || (v->type == VehicleType::Train && Train::From(v)->flags.Any(VehicleRailFlagsIsBroken))) && !mouse_over_start_stop) {
 			const Vehicle *w = (v->type == VehicleType::Train) ? GetMostSeverelyBrokenEngine(Train::From(v)) : v;
 
@@ -4307,6 +4316,10 @@ public:
 				case OT_GOTO_STATION: {
 					show_order_number();
 					text_colour = TextColour::LightBlue;
+					if (v->type == VehicleType::Train && Train::From(v)->coupling_target != VehicleID::Invalid() && Train::GetIfValid(Train::From(v)->coupling_target) != nullptr) {
+						append(STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH, Train::From(v)->coupling_target, v->GetDisplaySpeed());
+						break;
+					}
 					append(v->vehicle_flags.Test(VehicleFlag::PathfinderLost) ? STR_VEHICLE_STATUS_CANNOT_REACH_STATION_VEL : STR_VEHICLE_STATUS_HEADING_FOR_STATION_VEL,
 							v->current_order.GetDestination().ToStationID(), PackVelocity(v->GetDisplaySpeed(), v->type));
 					break;
@@ -4337,7 +4350,14 @@ public:
 				}
 
 				case OT_LOADING:
-					append(STR_VEHICLE_STATUS_LOADING_UNLOADING);
+					if (v->type == VehicleType::Train && IsTrainCoupled(Train::From(v))) {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED, GetCoupledPassiveHead(Train::From(v))->index);
+					} else if (v->type == VehicleType::Train && GetCurrentCouplingOrder(Train::From(v)) != nullptr &&
+							GetCurrentCouplingOrder(Train::From(v))->GetCouplingMode() == OrderCouplingMode::Couple) {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING);
+					} else {
+						append(STR_VEHICLE_STATUS_LOADING_UNLOADING);
+					}
 					break;
 
 				case OT_LOADING_ADVANCE:
@@ -4417,6 +4437,12 @@ public:
 			}
 
 			case WID_VV_START_STOP: // start stop
+				if (IsCoupledPassiveTrain(v)) {
+					/* The passive train of a coupled combination is started and stopped with the combination, show that instead. */
+					const Train *head = GetCouplingCombinationHead(Train::From(v));
+					if (head != nullptr) ShowVehicleViewWindow(head);
+					break;
+				}
 				StartStopVehicle(v, false);
 				break;
 
@@ -4499,7 +4525,18 @@ public:
 					ShowDropDownList(this, std::move(list), -1, widget, 0, DropDownOptions{}, DDSF_SHARED);
 				} else {
 					this->HandleButtonClick(WID_VV_GOTO_DEPOT);
-					Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, _ctrl_pressed ? DepotCommandFlag::Service : DepotCommandFlags{}, {});
+					const DepotCommandFlags flags = _ctrl_pressed ? DepotCommandFlag::Service : DepotCommandFlags{};
+					const bool cancels = v->current_order.IsType(OT_GOTO_DEPOT);
+					if (!flags.Test(DepotCommandFlag::Service) && !cancels && v->type == VehicleType::Train && IsTrainInCombination(Train::From(v))) {
+						ShowQuery(GetEncodedString(STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION), GetEncodedString(STR_TRAIN_COUPLING_DEPOT_QUERY), this, [](Window *w, bool confirmed) {
+							if (!confirmed) return;
+							const Vehicle *v = Vehicle::GetIfValid(static_cast<VehicleID>(w->window_number));
+							if (v == nullptr) return;
+							Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, DepotCommandFlags{}, {});
+						});
+					} else {
+						Command<Commands::SendVehicleToDepot>::Post(GetCmdSendToDepotMsg(v), v->index, flags, {});
+					}
 				}
 				break;
 			case WID_VV_REFIT: // refit

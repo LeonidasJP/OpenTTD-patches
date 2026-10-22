@@ -184,6 +184,10 @@ STR_CONFIG_SETTING_TRACK_EDIT_IGNORE_REALISTIC_BRAKING_HELPTEXT :Allow track edi
 
 STR_CONFIG_SETTING_THROUGH_LOAD_SPEED_LIMIT                     :Train through load maximum speed: {STRING2}
 STR_CONFIG_SETTING_THROUGH_LOAD_SPEED_LIMIT_HELPTEXT            :The maximum permitted speed for trains when through loading at a station
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Train coupling maximum speed: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :The maximum permitted speed for trains which drive into an occupied platform to couple to another train, from the last signal before the platform
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Train coupling final approach maximum speed: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED_HELPTEXT          :The maximum permitted speed for trains on the last tile before coupling to another train
 
 STR_CONFIG_SETTING_RAIL_DEPOT_SPEED_LIMIT                       :Rail depot maximum speed: {STRING2}
 STR_CONFIG_SETTING_RAIL_DEPOT_SPEED_LIMIT_HELPTEXT              :The maximum permitted speed for trains when entering or exiting a rail depot
@@ -268,6 +272,8 @@ STR_CONFIG_SETTING_SHOW_TRAIN_WEIGHT_RATIOS_IN_DETAILS          :Show train weig
 STR_CONFIG_SETTING_SHOW_TRAIN_WEIGHT_RATIOS_IN_DETAILS_HELPTEXT :Show train weight ratios in the vehicle details window
 
 STR_CONFIG_SETTING_SHOW_RESTRICTED_SIG_RECOLOUR                 :Show default restricted signals with blue signal posts: {STRING2}
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS                       :Flash default signals for trains which couple: {STRING2}
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS_HELPTEXT              :Let default signals flash green when a train may drive into an occupied platform to couple to the train waiting there. When disabled, these signals show normal green. This does not affect NewGRF signal graphics.
 STR_CONFIG_SETTING_SHOW_RESTRICTED_SIG_RECOLOUR_HELPTEXT        :Show electric signals with routing restriction programs with a blue signal post, when using the default signal graphics. This does not affect NewGRF signal graphics. This is to make it easier to visually distinguish restricted signals.
 
 STR_CONFIG_SETTING_SHOW_ALL_SIG_DEF                             :Show all signals using default graphics: {STRING2}
@@ -1646,6 +1652,10 @@ STR_VEHICLE_STATUS_BROKEN_DOWN_VEL_SHORT                        :{RED}Broken dow
 STR_VEHICLE_STATUS_TRAIN_STUCK_WAIT_RESTRICTION                 :{ORANGE}Waiting due to routing restriction
 STR_VEHICLE_STATUS_TRAIN_WAITING_TIMETABLE                      :{ORANGE}Waiting due to timetable
 STR_VEHICLE_STATUS_TRAIN_REVERSING                              :{ORANGE}Reversing, {VELOCITY}
+STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE                        :{LTBLUE}Coupled to {VEHICLE}
+STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH                      :{LTBLUE}Coupling to {VEHICLE}, {VELOCITY}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED                    :{LTBLUE}Loading / Unloading, coupled to {VEHICLE}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING              :{LTBLUE}Loading / Unloading, waiting for coupling
 STR_VEHICLE_STATUS_TRAIN_MOVING_DEPOT                           :{ORANGE}Moving in depot
 
 STR_VEHICLE_STATUS_TRAIN_STOPPING_VEL_END                       :{RED}Stopping, {VELOCITY}
@@ -1910,6 +1920,28 @@ STR_ORDER_RV_DIR_NE                                             :[north-east dir
 STR_ORDER_RV_DIR_SE                                             :[south-east direction]
 STR_ORDER_RV_DIR_SW                                             :[south-west direction]
 STR_ORDER_RV_DIR_NW                                             :[north-west direction]
+
+STR_ORDER_COUPLING_MODE_NONE                                    :No coupling or splitting
+STR_ORDER_COUPLING_MODE_COUPLE                                  :Couple trains here
+STR_ORDER_COUPLING_MODE_SPLIT                                   :Split train here
+STR_ORDER_COUPLING_LEADER_WAITING                               :Coupling: waiting train leads
+STR_ORDER_COUPLING_LEADER_ARRIVING                              :Coupling: arriving train leads
+STR_ORDER_COUPLING_FILTER_ANY                                   :Couple to: any train
+STR_ORDER_COUPLING_FILTER_GROUP                                 :Couple to: train in group...
+STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Couple to: train with orders of...
+STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[split]
+STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[couple: any train{STRING}]
+STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[couple: group {GROUP}{STRING}]
+STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[couple: orders of {VEHICLE}{STRING}]
+STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[couple: {PUSH_COLOUR}{RED}undefined{POP_COLOUR}{STRING}]
+STR_ORDER_COUPLING_ARRIVING_LEADS                               :, arriving train leads
+STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Coupled combination allowed to stop in depot
+STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[coupled allowed]
+STR_ORDER_CONDITIONAL_COUPLING_ROLE                             :Coupling role
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED                     :Coupled to another train
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_LEADING                     :Leading a coupled combination
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_SPLIT_OFF_LAST              :Split off at last split
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Last coupling failed
 
 STR_ORDER_CONDITIONAL_UNDEFINED_STATION                         :{PUSH_COLOUR}{RED}undefined station{POP_COLOUR}
 
@@ -2556,6 +2588,24 @@ STR_ABOUT_MENU_SHOW_PICKER_TOOL                                 :Picker tool
 STR_ABOUT_MENU_SHOW_TOGGLE_MODIFIER_KEYS                        :Modifier key window
 
 STR_ERROR_CAN_T_CHANGE_SPEED_RESTRICTION                        :{WHITE}Can't change vehicle's speed restriction...
+
+STR_ERROR_CAN_T_COUPLE_TRAINS                                   :{WHITE}Can't couple trains...
+STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN                             :{WHITE}Can't split train...
+STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION             :{WHITE}... trains must be stopped inside a station platform
+STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... trains are not directly behind each other
+STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... train is already coupled to another train
+STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... train is not coupled to another train
+STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... coupled trains can only be refitted or started/stopped
+STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... a split order is required before another couple order
+STR_ERROR_TRAIN_COUPLING_NO_GROUPS                              :{WHITE}... there are no train groups
+STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... select a train of your own with orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Warning: a coupled train uses these orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}The coupled combination will stop in the depot. Enable "Coupled combination allowed to stop in depot" to suppress this warning
+STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Coupled combination {VEHICLE} stopped in a depot
+STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} has two couple orders without a split order in between
+STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} has a couple order with a deleted group or order list
+STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Send coupled combination to depot
+STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}This train is coupled to another train. Send the coupled combination to a depot to stop there?
 
 STR_WARNING_PASSWORD_SECURITY                                   :{YELLOW}Warning: Server administrators may be able to read any text entered here.
 STR_NETWORK_NEED_COMPANY_PASSWORD_CAPTION                       :{WHITE}Company is protected. Enter password

@@ -74,6 +74,25 @@
 #include "company_cmd.h"
 #include "misc_cmd.h"
 #include "order_backup.h"
+#include "train.h"
+#include "train_coupling.h"
+#include "departures_gui.h"
+#include "timetable.h"
+#include "gui.h"
+#include "vehicle_gui.h"
+#include "widgets/vehicle_widget.h"
+#include "cargopacket.h"
+#include "group.h"
+#include "group_cmd.h"
+#include <map>
+#include "train_coupling_cmd.h"
+#include "vehicle_cmd.h"
+#include "order_cmd.h"
+#include "timetable_cmd.h"
+#include "order_base.h"
+#include "pbs.h"
+#include "station_map.h"
+#include "rail_map.h"
 #include "cheat_func.h"
 #include "walltime_func.h"
 #include <time.h>
@@ -81,10 +100,13 @@
 #include "3rdparty/cpp-btree/btree_set.h"
 
 #include <sstream>
+#include <deque>
 
 #if defined(WITH_ZLIB)
 #include "network/network_content.h"
 #endif /* WITH_ZLIB */
+
+#include "order_serialisation.h"
 
 #include "table/strings.h"
 
@@ -356,6 +378,865 @@ static bool ConResetTile(std::span<std::string_view> argv)
 	return false;
 }
 #endif /* _DEBUG */
+
+/**
+ * Find a train of the local company by its unit number.
+ * @param arg The unit number as string.
+ * @return The train, or nullptr if not found.
+ */
+static Train *FindLocalTrainByUnitNumber(std::string_view arg)
+{
+	auto unit = ParseType<UnitID>(arg);
+	if (!unit.has_value()) return nullptr;
+	for (Train *t : Train::IterateFrontOnly()) {
+		if (t->owner == _local_company && t->unitnumber == *unit && t->IsFrontEngine()) return t;
+	}
+	return nullptr;
+}
+
+/**
+ * Find a train of the local company by unit number, including the heads of passive trains in coupled combinations.
+ * @param arg The unit number.
+ * @return The train, or nullptr if not found.
+ */
+static Train *FindLocalTrainIdentityByUnitNumber(std::string_view arg)
+{
+	Train *t = FindLocalTrainByUnitNumber(arg);
+	if (t != nullptr) return t;
+	auto unit = ParseType<UnitID>(arg);
+	if (!unit.has_value()) return nullptr;
+	for (const auto &it : _train_couplings) {
+		Train *passive = Train::GetIfValid(it.second.passive_head);
+		if (passive != nullptr && passive->owner == _local_company && passive->unitnumber == *unit) return passive;
+	}
+	return nullptr;
+}
+
+/**
+ * Couple two trains which are stopped directly behind each other in a station.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCoupleTrains(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3 || argv.size() > 4) {
+		IConsolePrint(CC_HELP, "Couple two trains stopped directly behind each other in a station platform. Usage: 'couple_trains <waiting train number> <arriving train number> [arriving|waiting]'.");
+		IConsolePrint(CC_HELP, "The last argument selects which train leads the combination, the default is the waiting train.");
+		return true;
+	}
+
+	Train *waiting = FindLocalTrainByUnitNumber(argv[1]);
+	Train *arriving = FindLocalTrainByUnitNumber(argv[2]);
+	if (waiting == nullptr || arriving == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	bool arriving_leads = false;
+	if (argv.size() == 4) {
+		if (argv[3] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[3] != "waiting") {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::CoupleTrains>::Do(DoCommandFlags{}, waiting->index, arriving->index, arriving_leads);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't couple trains: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::CoupleTrains>::Post(STR_ERROR_CAN_T_COUPLE_TRAINS, waiting->tile, waiting->index, arriving->index, arriving_leads);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "couple_trains: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Let a train drive into the platform of a waiting train to couple to it.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCoupleApproach(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3 || argv.size() > 4) {
+		IConsolePrint(CC_HELP, "Let a train drive into the platform of a waiting train and couple to it. Usage: 'couple_approach <arriving train number> <waiting train number|none> [arriving|waiting]'.");
+		IConsolePrint(CC_HELP, "The arriving train must have an order to go to the station of the waiting train. The last argument selects which train leads the combination, the default is the waiting train.");
+		return true;
+	}
+
+	Train *arriving = FindLocalTrainByUnitNumber(argv[1]);
+	Train *waiting = (argv[2] == "none") ? nullptr : FindLocalTrainByUnitNumber(argv[2]);
+	if (arriving == nullptr || (waiting == nullptr && argv[2] != "none")) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	bool arriving_leads = false;
+	if (argv.size() == 4) {
+		if (argv[3] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[3] != "waiting") {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	const VehicleID target = waiting != nullptr ? waiting->index : VehicleID::Invalid();
+	CommandCost test = Command<Commands::SetTrainCouplingTarget>::Do(DoCommandFlags{}, arriving->index, target, arriving_leads);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't set coupling target: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::SetTrainCouplingTarget>::Post(STR_ERROR_CAN_T_COUPLE_TRAINS, arriving->tile, arriving->index, target, arriving_leads);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "couple_approach: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Set the coupling action of a station order.
+ * @copydoc IConsoleCmdProc
+ */
+/**
+ * Debug: print the JSON export of the orders of a train, and optionally import it into another train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConOrdersJson(std::span<std::string_view> argv)
+{
+	if (argv.size() < 2 || argv.size() > 3) {
+		IConsolePrint(CC_HELP, "Debug: print the JSON export of the orders of a train, and replace the orders of another train by it. Usage: 'orders_json <train number> [<destination train number>]'.");
+		return true;
+	}
+	Train *src = FindLocalTrainByUnitNumber(argv[1]);
+	if (src == nullptr || src->orders == nullptr) {
+		IConsolePrint(CC_ERROR, "Train or orders not found.");
+		return true;
+	}
+	const std::string json = OrderListToJSONString(src->orders);
+	IConsolePrint(CC_DEFAULT, "{}", json);
+	if (argv.size() == 3) {
+		Train *dst = FindLocalTrainByUnitNumber(argv[2]);
+		if (dst == nullptr) {
+			IConsolePrint(CC_ERROR, "Destination train not found.");
+			return true;
+		}
+		AutoRestoreBackup cur_company(_current_company, _local_company);
+		OrderImportErrors errors = ImportJsonOrderList(dst, json);
+		IConsolePrint(CC_DEFAULT, "orders_json: imported, errors: {}", errors.HasErrors() ? "yes" : "no");
+	}
+	return true;
+}
+
+static bool ConCouplingOrder(std::span<std::string_view> argv)
+{
+	if (argv.size() < 4) {
+		IConsolePrint(CC_HELP, "Set the coupling action of a station order. Usage: 'coupling_order <train number> <order number> <none|couple|split> [arriving|waiting] [any|group <group id>|orderlist <train number>]'.");
+		IConsolePrint(CC_HELP, "Order numbers start at 1. 'arriving' or 'waiting' selects which train leads when coupling, the default is the waiting train.");
+		return true;
+	}
+
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders()) {
+		IConsolePrint(CC_ERROR, "Train or order not found.");
+		return true;
+	}
+	const VehicleOrderID sel_ord = static_cast<VehicleOrderID>(*order_number - 1);
+
+	OrderCouplingMode mode;
+	if (argv[3] == "none") {
+		mode = OrderCouplingMode::None;
+	} else if (argv[3] == "couple") {
+		mode = OrderCouplingMode::Couple;
+	} else if (argv[3] == "split") {
+		mode = OrderCouplingMode::Split;
+	} else {
+		return false;
+	}
+
+	bool arriving_leads = false;
+	OrderCouplingFilter filter = OrderCouplingFilter::Any;
+	uint16_t filter_id = 0;
+	for (size_t i = 4; i < argv.size(); i++) {
+		if (argv[i] == "arriving") {
+			arriving_leads = true;
+		} else if (argv[i] == "waiting") {
+			arriving_leads = false;
+		} else if (argv[i] == "any") {
+			filter = OrderCouplingFilter::Any;
+		} else if (argv[i] == "group" && i + 1 < argv.size()) {
+			auto id = ParseType<uint16_t>(argv[++i]);
+			if (!id.has_value()) return false;
+			filter = OrderCouplingFilter::Group;
+			filter_id = *id;
+		} else if (argv[i] == "orderlist" && i + 1 < argv.size()) {
+			Train *other = FindLocalTrainByUnitNumber(argv[++i]);
+			if (other == nullptr || other->orders == nullptr) {
+				IConsolePrint(CC_ERROR, "Train for order list not found.");
+				return true;
+			}
+			filter = OrderCouplingFilter::OrderList;
+			filter_id = other->orders->index.base();
+		} else {
+			return false;
+		}
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	auto modify = [&](ModifyOrderFlags mof, uint16_t data) -> bool {
+		CommandCost test = Command<Commands::ModifyOrder>::Do(DoCommandFlags{}, t->index, sel_ord, mof, data, INVALID_CARGO, std::string{});
+		if (test.Failed()) {
+			IConsolePrint(CC_ERROR, "Can't modify order: {}", GetString(test.GetErrorMessage()));
+			return false;
+		}
+		return Command<Commands::ModifyOrder>::Post(STR_ERROR_CAN_T_MODIFY_THIS_ORDER, t->tile, t->index, sel_ord, mof, data, INVALID_CARGO, std::string{});
+	};
+	if (!modify(MOF_COUPLING_MODE, to_underlying(mode))) return true;
+	if (mode == OrderCouplingMode::Couple) {
+		if (!modify(MOF_COUPLING_LEADER, arriving_leads ? 1 : 0)) return true;
+		if (!modify(MOF_COUPLING_FILTER, to_underlying(filter))) return true;
+		if (filter != OrderCouplingFilter::Any && !modify(MOF_COUPLING_FILTER_ID, filter_id)) return true;
+	}
+	IConsolePrint(CC_DEFAULT, "coupling_order: done");
+	return true;
+}
+
+/**
+ * Debug: modify an order of a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConModifyOrder(std::span<std::string_view> argv)
+{
+	if (argv.size() != 5) {
+		IConsolePrint(CC_HELP, "Debug: modify an order of a train. Usage: 'modify_order <train number> <order number> <modify order flag number> <data>'.");
+		return true;
+	}
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	auto mof = ParseType<uint>(argv[3]);
+	auto data = ParseType<uint16_t>(argv[4]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders() || !mof.has_value() || *mof >= MOF_END || !data.has_value()) return false;
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::ModifyOrder>::Do(DoCommandFlags{}, t->index, static_cast<VehicleOrderID>(*order_number - 1), static_cast<ModifyOrderFlags>(*mof), *data, INVALID_CARGO, std::string{});
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't modify order: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	Command<Commands::ModifyOrder>::Post(STR_ERROR_CAN_T_MODIFY_THIS_ORDER, t->tile, t->index, static_cast<VehicleOrderID>(*order_number - 1), static_cast<ModifyOrderFlags>(*mof), *data, INVALID_CARGO, std::string{});
+	return true;
+}
+
+/**
+ * Debug: set the timetabled wait time of an order of a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSetWaitTime(std::span<std::string_view> argv)
+{
+	if (argv.size() != 4) {
+		IConsolePrint(CC_HELP, "Debug: set the timetabled wait time of an order. Usage: 'set_wait_time <train number> <order number> <ticks>'.");
+		return true;
+	}
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	auto order_number = ParseType<uint>(argv[2]);
+	auto ticks = ParseType<uint32_t>(argv[3]);
+	if (t == nullptr || !order_number.has_value() || *order_number < 1 || *order_number > t->GetNumOrders() || !ticks.has_value()) return false;
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	Command<Commands::ChangeTimetable>::Post(STR_ERROR_CAN_T_TIMETABLE_VEHICLE, t->index, static_cast<VehicleOrderID>(*order_number - 1), MTF_WAIT_TIME, *ticks, ModifyTimetableCtrlFlags{});
+	return true;
+}
+
+/**
+ * Split a combination of coupled trains.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSplitTrain(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Split a combination of coupled trains. Usage: 'split_train <train number>'.");
+		return true;
+	}
+
+	Train *head = FindLocalTrainByUnitNumber(argv[1]);
+	if (head == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::SplitCoupledTrain>::Do(DoCommandFlags{}, head->index);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't split train: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::SplitCoupledTrain>::Post(STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN, head->tile, head->index);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "split_train: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Debug: cut a train into two trains outside a depot.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCutTrain(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: cut a stopped train into two trains, outside a depot. Usage: 'cut_train <train number> <vehicle position>'.");
+		IConsolePrint(CC_HELP, "The rear part starts at the given vehicle position (1 = first vehicle), and must start with an engine.");
+		return true;
+	}
+
+	Train *head = FindLocalTrainByUnitNumber(argv[1]);
+	auto pos = ParseType<uint>(argv[2]);
+	if (head == nullptr || !pos.has_value() || *pos < 2) {
+		IConsolePrint(CC_ERROR, "Train or vehicle position not found.");
+		return true;
+	}
+
+	Train *v = head;
+	for (uint i = 1; i < *pos && v != nullptr; i++) v = v->GetNextVehicle();
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Vehicle position not found.");
+		return true;
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	CommandCost test = Command<Commands::CutTrain>::Do(DoCommandFlags{}, v->index);
+	if (test.Failed()) {
+		IConsolePrint(CC_ERROR, "Can't cut train: {}", GetString(test.GetErrorMessage()));
+		return true;
+	}
+	bool ok = Command<Commands::CutTrain>::Post(STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN, head->tile, v->index);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "cut_train: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Debug: start or stop a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConStartStopTrain(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: start or stop a train. Usage: 'start_stop_train <train number>'.");
+		return true;
+	}
+
+	Train *t = FindLocalTrainByUnitNumber(argv[1]);
+	if (t == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+
+	AutoRestoreBackup cur_company(_current_company, _local_company);
+	bool ok = Command<Commands::StartStopVehicle>::Post(STR_ERROR_CAN_T_STOP_START_TRAIN, t->tile, t->index, false);
+	IConsolePrint(ok ? CC_DEFAULT : CC_ERROR, "start_stop_train: {}", ok ? "done" : "failed");
+	return true;
+}
+
+/** Debug: console commands to execute once a train is loading at a station, processed in order. */
+struct TrainLoadingConsoleWatch {
+	UnitID unit;
+	std::string station;
+	std::string command;
+};
+static std::deque<TrainLoadingConsoleWatch> _train_loading_console_watches;
+
+/**
+ * Debug: execute a console command once a train is loading at a station.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConOnTrainLoading(std::span<std::string_view> argv)
+{
+	if (argv.size() != 4) {
+		IConsolePrint(CC_HELP, "Debug: execute a console command once a train is loading at a station whose name contains the given text. Usage: 'on_train_loading <train number> <station name part> <command>'.");
+		IConsolePrint(CC_HELP, "Multiple watches are handled in the order in which they are given.");
+		return true;
+	}
+	auto unit = ParseType<UnitID>(argv[1]);
+	if (!unit.has_value()) return false;
+	_train_loading_console_watches.push_back({ *unit, std::string(argv[2]), std::string(argv[3]) });
+	return true;
+}
+
+/**
+ * Debug: show the coupling approach state of a train.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConDebugCoupling(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: show the coupling approach state of a train. Usage: 'debug_coupling <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	if (v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+		IConsolePrint(CC_DEFAULT, "Train {}: passive in combination {}", v->unitnumber, GetCouplingCombinationHead(v)->unitnumber);
+		IConsolePrint(CC_DEFAULT, "  order {} (real {}) type {} dest {} order time {} lateness {}",
+				v->cur_implicit_order_index + 1, v->cur_real_order_index + 1, v->current_order.GetType(), v->current_order.GetDestination().base(), v->current_order_time, v->lateness_counter);
+		const Train *leader = nullptr;
+		std::string mirrored;
+		for (VehicleOrderID index : GetMirroredCouplingOrders(v, &leader)) mirrored += fmt::format(" {}", index + 1);
+		IConsolePrint(CC_DEFAULT, "  last station {}, mirrored orders of the leader:{}", v->last_station_visited.base(), mirrored.empty() ? " none" : mirrored);
+		uint passive_cargo = 0;
+		for (const Vehicle *u = v; u != nullptr; u = u->Next()) passive_cargo += u->cargo.StoredCount();
+		IConsolePrint(CC_DEFAULT, "  cargo {}, profit this year {}, cargo payment {}", passive_cargo, v->profit_this_year >> 8, v->cargo_payment != nullptr ? "yes" : "no");
+		return true;
+	}
+	const Train *mf = v->GetMovingFront();
+	IConsolePrint(CC_DEFAULT, "Train {}: moving front tile {}x{} pos {}x{} dir {} track 0x{:X} speed {} stuck {} wait {} target {} dir {}",
+			v->unitnumber, TileX(mf->tile), TileY(mf->tile), mf->x_pos, mf->y_pos, mf->direction, mf->track, v->cur_speed,
+			v->flags.Test(VehicleRailFlag::Stuck), v->wait_counter, v->coupling_target, to_underlying(v->coupling_dir));
+	PBSTileInfo res = FollowTrainReservation(v);
+	IConsolePrint(CC_DEFAULT, "  reservation end {}x{} td {} okay {}", TileX(res.tile), TileY(res.tile), res.trackdir, res.okay);
+	IConsolePrint(CC_DEFAULT, "  order {} type {} order time {} lateness {} timetable start {}",
+			v->cur_implicit_order_index + 1, v->current_order.GetType(), v->current_order_time, v->lateness_counter, v->timetable_start.base());
+	{
+		uint unit_cargo = 0;
+		const Vehicle *unit_end = GetCargoUnitEnd(v);
+		for (const Vehicle *u = v; u != unit_end; u = u->Next()) unit_cargo += u->cargo.StoredCount();
+		IConsolePrint(CC_DEFAULT, "  cargo {}, profit this year {}", unit_cargo, v->profit_this_year >> 8);
+	}
+	IConsolePrint(CC_DEFAULT, "  roles: coupled {} leading {} split off last {} coupling failed {}",
+			HasTrainCouplingRole(v, OrderCouplingRole::Coupled), HasTrainCouplingRole(v, OrderCouplingRole::Leading),
+			HasTrainCouplingRole(v, OrderCouplingRole::SplitOffLast), HasTrainCouplingRole(v, OrderCouplingRole::CouplingFailed));
+
+	const Train *target = Train::GetIfValid(v->coupling_target);
+	if (target == nullptr) return true;
+	IConsolePrint(CC_DEFAULT, "  target {} valid {} head {}x{} last {}x{} speed {} order type {}", target->unitnumber, GetCouplingApproachTarget(v) != nullptr,
+			TileX(target->tile), TileY(target->tile), TileX(target->Last()->tile), TileY(target->Last()->tile), target->cur_speed, target->current_order.GetType());
+	if (!IsRailStationTile(target->tile)) return true;
+	const Axis axis = GetRailStationAxis(target->tile);
+	const TileIndexDiff diff = TileOffsByDiagDir(AxisToDiagDir(axis));
+	TileIndex start = target->tile;
+	while (IsCompatibleTrainStationTile(TileAdd(start, -diff), target->tile)) start = TileAdd(start, -diff);
+	for (TileIndex t = start; IsCompatibleTrainStationTile(t, target->tile); t = TileAdd(t, diff)) {
+		std::string vehs;
+		for (const Train *u : VehiclesOnTile<VehicleType::Train>(t)) vehs += fmt::format(" {}(unit {})", u->index, u->First()->unitnumber);
+		IConsolePrint(CC_DEFAULT, "  platform tile {}x{}: reserved {} coupling platform {} vehicles:{}", TileX(t), TileY(t), HasStationReservation(t), IsCouplingApproachPlatformTile(v, t), vehs);
+	}
+	for (DiagDirection dir : { AxisToDiagDir(axis), ReverseDiagDir(AxisToDiagDir(axis)) }) {
+		std::optional<int> stop = GetCouplingStopLocation(v, dir);
+		IConsolePrint(CC_DEFAULT, "  coupling stop location for dir {}: {}", to_underlying(dir), stop.has_value() ? *stop : -1);
+	}
+	return true;
+}
+
+/**
+ * Debug: dump rail tiles in a rectangle.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConDumpRailTiles(std::span<std::string_view> argv)
+{
+	if (argv.size() != 5) {
+		IConsolePrint(CC_HELP, "Debug: dump rail tiles. Usage: 'dump_rail_tiles <x0> <y0> <x1> <y1>'.");
+		return true;
+	}
+	auto x0 = ParseType<uint>(argv[1]), y0 = ParseType<uint>(argv[2]), x1 = ParseType<uint>(argv[3]), y1 = ParseType<uint>(argv[4]);
+	if (!x0 || !y0 || !x1 || !y1) return false;
+	for (uint y = *y0; y <= *y1; y++) {
+		for (uint x = *x0; x <= *x1; x++) {
+			TileIndex t = TileXY(x, y);
+			std::string info;
+			if (IsRailDepotTile(t)) {
+				info = fmt::format("depot dir {} reserved {}", to_underlying(GetRailDepotDirection(t)), HasDepotReservation(t));
+			} else if (IsTileType(t, TileType::Railway)) {
+				info = fmt::format("rail tracks 0x{:X} reserved 0x{:X}", GetTrackBits(t), GetRailReservationTrackBits(t));
+				if (HasSignals(t)) {
+					for (Track tr : SetTrackBitIterator(GetTrackBits(t))) {
+						if (!HasSignalOnTrack(t, tr)) continue;
+						info += fmt::format(" signal track {} type {} dirs {}{}", tr, to_underlying(GetSignalType(t, tr)),
+								HasSignalOnTrackdir(t, TrackToTrackdir(tr)) ? "A" : "", HasSignalOnTrackdir(t, ReverseTrackdir(TrackToTrackdir(tr))) ? "B" : "");
+					}
+				}
+			} else if (IsRailStationTile(t)) {
+				info = fmt::format("station {} axis {} reserved {}", GetStationIndex(t), to_underlying(GetRailStationAxis(t)), HasStationReservation(t));
+			} else {
+				continue;
+			}
+			IConsolePrint(CC_DEFAULT, "tile {}x{}: {}", x, y, info);
+		}
+	}
+	return true;
+}
+
+/** Debug: console commands to execute periodically. */
+struct PeriodicConsoleCommand {
+	uint interval;
+	uint counter;
+	std::string command;
+	bool once = false; ///< Execute only once, see 'after_ticks'.
+};
+static std::vector<PeriodicConsoleCommand> _periodic_console_commands;
+
+/**
+ * Debug: execute a console command every N ticks.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConEveryTicks(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: execute a console command every N game ticks. Usage: 'every_ticks <ticks> <command>'.");
+		return true;
+	}
+	auto interval = ParseType<uint>(argv[1]);
+	if (!interval.has_value() || *interval == 0) return false;
+	_periodic_console_commands.push_back({ *interval, 0, std::string(argv[2]) });
+	return true;
+}
+
+/**
+ * Debug: execute a console command once after a number of game ticks.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConAfterTicks(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: execute a console command once after N game ticks. Usage: 'after_ticks <ticks> <command>'.");
+		return true;
+	}
+	auto interval = ParseType<uint>(argv[1]);
+	if (!interval.has_value() || *interval == 0) return false;
+	_periodic_console_commands.push_back({ *interval, 0, std::string(argv[2]), true });
+	return true;
+}
+
+/** Debug: check the first train loading console watch and the periodic console commands, called every tick. */
+void ProcessTrainLoadingConsoleWatches()
+{
+	for (size_t i = 0; i < _periodic_console_commands.size(); i++) {
+		PeriodicConsoleCommand &pc = _periodic_console_commands[i];
+		if (++pc.counter >= pc.interval) {
+			pc.counter = 0;
+			std::string command = pc.command;
+			if (pc.once) {
+				_periodic_console_commands.erase(_periodic_console_commands.begin() + i);
+				i--;
+			}
+			IConsoleCmdExec(command);
+		}
+	}
+
+	if (_train_loading_console_watches.empty()) return;
+	const TrainLoadingConsoleWatch &watch = _train_loading_console_watches.front();
+	Train *t = FindLocalTrainByUnitNumber(fmt::format("{}", watch.unit));
+	if (t == nullptr || !t->current_order.IsType(OT_LOADING)) return;
+	const Station *st = Station::GetIfValid(t->last_station_visited);
+	if (st == nullptr || st->GetCachedName().find(watch.station) == std::string_view::npos) return;
+
+	std::string command = watch.command;
+	IConsolePrint(CC_DEFAULT, "on_train_loading: train {} loading at {}, executing: {}", watch.unit, st->GetCachedName(), command);
+	_train_loading_console_watches.pop_front();
+	IConsoleCmdExec(command);
+}
+
+/**
+ * List the coupled train combinations.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConListTrainCouplings(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "List all combinations of coupled trains. Usage: 'list_train_couplings'.");
+		return true;
+	}
+
+	IConsolePrint(CC_DEFAULT, "Braking model: {}, coupling speed: {}, final coupling speed: {}",
+			_settings_game.vehicle.train_braking_model == TBM_REALISTIC ? "realistic" : "original",
+			_settings_game.vehicle.train_coupling_speed, _settings_game.vehicle.train_coupling_final_speed);
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (!t->IsFrontEngine()) continue;
+		uint count = 0;
+		for (const Train *u = t; u != nullptr; u = u->Next()) count++;
+		const Train *mf = t->GetMovingFront();
+		IConsolePrint(CC_DEFAULT, "Train: id {}, unit {}, owner {}, vehicles {}, head {}x{}, moving front {}x{} pos {}x{} dir {}, speed {}, order type {} dest {} idx {}, lost {}, backwards {}, stopped {}, coupled {}",
+				t->index, t->unitnumber, t->owner, count, TileX(t->tile), TileY(t->tile), TileX(mf->tile), TileY(mf->tile), mf->x_pos, mf->y_pos, mf->direction,
+				t->cur_speed, t->current_order.GetType(), t->current_order.GetDestination().value, t->cur_real_order_index,
+				t->vehicle_flags.Test(VehicleFlag::PathfinderLost) ? "yes" : "no", t->IsDrivingBackwards() ? "yes" : "no",
+				t->vehstatus.Test(VehState::Stopped) ? "yes" : "no", IsTrainCoupled(t) ? "yes" : "no");
+		if (argv.size() >= 2 && argv[1] == "orders") {
+			int i = 0;
+			for (const Order *o : t->Orders()) {
+				std::string dest;
+				if (o->IsType(OT_GOTO_STATION) || o->IsType(OT_GOTO_WAYPOINT) || o->IsType(OT_IMPLICIT)) {
+					const BaseStation *st = BaseStation::GetIfValid(o->GetDestination().ToStationID());
+					if (st != nullptr) dest = fmt::format("{} ({}x{})", st->GetCachedName(), TileX(st->xy), TileY(st->xy));
+				} else if (o->IsType(OT_GOTO_DEPOT)) {
+					dest = fmt::format("depot {}", o->GetDestination().value);
+				}
+				IConsolePrint(CC_DEFAULT, "  order {}: type {} {} flags 0x{:X} stop location {} coupling {} leader {} filter {}/{}{}", i + 1, o->GetType(), dest, o->GetRawFlags(), to_underlying(o->GetStopLocation()),
+						to_underlying(o->GetCouplingMode()), o->IsCouplingArrivingLeads() ? "arriving" : "waiting", to_underlying(o->GetCouplingFilter()), o->GetCouplingFilterID(), i == t->cur_real_order_index ? " <- current" : "");
+				i++;
+			}
+		}
+		if (t->coupling_target != VehicleID::Invalid()) {
+			std::optional<int> dist = IsCouplingApproachPlatformTile(t, mf->tile) ? GetCouplingStopDistance(t) : std::nullopt;
+			IConsolePrint(CC_DEFAULT, "  approaching {} to couple: valid {}, dir {}, speed limit {}, arriving leads {}, distance {}",
+					t->coupling_target, GetCouplingApproachTarget(t) != nullptr ? "yes" : "no", to_underlying(t->coupling_dir),
+					t->flags.Test(VehicleRailFlag::CouplingSpeedLimit) ? "yes" : "no", t->flags.Test(VehicleRailFlag::CouplingArrivingLeads) ? "yes" : "no",
+					dist.has_value() ? *dist : -1);
+		}
+	}
+	for (const auto &it : _train_couplings) {
+		const TrainCoupling &tc = it.second;
+		const Train *head = Train::GetIfValid(tc.head);
+		const Train *passive = Train::GetIfValid(tc.passive_head);
+		IConsolePrint(CC_DEFAULT, "Combination: head {} (unit {}), passive head {} (unit {}), passive group {}, identities swapped: {}",
+				tc.head, head != nullptr ? head->unitnumber : 0, tc.passive_head, passive != nullptr ? passive->unitnumber : 0, tc.passive_group, tc.identities_swapped ? "yes" : "no");
+	}
+	return true;
+}
+
+/**
+ * Debug: move a train, also the passive train of a coupled combination, to a group.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSetTrainGroup(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: move a train to a group. Usage: 'set_train_group <train number> <group id|new|default>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	GroupID group = DEFAULT_GROUP;
+	if (argv[2] == "new") {
+		group = NEW_GROUP;
+	} else if (argv[2] != "default") {
+		auto id = ParseType<uint16_t>(argv[2]);
+		if (!id.has_value()) return false;
+		group = GroupID(*id);
+	}
+	Backup<CompanyID> cur_company(_current_company, v->owner, FILE_LINE);
+	CommandCost ret = Command<Commands::AddVehicleToGroup>::Do(DoCommandFlag::Execute, group, v->index, false);
+	cur_company.Restore();
+	IConsolePrint(CC_DEFAULT, "set_train_group: {}", ret.Succeeded() ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Debug: check the group statistics by recalculating them.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCheckGroupStats(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: recalculate the group statistics and report differences. Usage: 'check_group_stats'.");
+		return true;
+	}
+	struct Snapshot {
+		uint16_t num_vehicle;
+		uint16_t num_vehicle_min_age;
+		btree::btree_map<EngineID, uint16_t> num_engines;
+		bool operator==(const Snapshot &) const = default;
+	};
+	auto engines = [](const btree::btree_map<EngineID, uint16_t> &in) {
+		btree::btree_map<EngineID, uint16_t> out;
+		for (const auto &e : in) {
+			if (e.second != 0) out[e.first] = e.second;
+		}
+		return out;
+	};
+	auto take = [&](std::map<std::string, Snapshot> &out) {
+		for (const Company *c : Company::Iterate()) {
+			const GroupStatistics &a = c->group_all[VehicleType::Train];
+			const GroupStatistics &d = c->group_default[VehicleType::Train];
+			out[fmt::format("company {} all", c->index)] = { a.num_vehicle, a.num_vehicle_min_age, engines(a.num_engines) };
+			out[fmt::format("company {} default", c->index)] = { d.num_vehicle, d.num_vehicle_min_age, engines(d.num_engines) };
+		}
+		for (const Group *g : Group::Iterate()) {
+			out[fmt::format("group {}", g->index)] = { g->statistics.num_vehicle, g->statistics.num_vehicle_min_age, engines(g->statistics.num_engines) };
+		}
+	};
+	std::map<std::string, Snapshot> before, after;
+	take(before);
+	GroupStatistics::UpdateAfterLoad();
+	GroupStatistics::UpdateProfits();
+	take(after);
+	uint differences = 0;
+	for (const auto &it : before) {
+		const Snapshot &b = it.second;
+		const Snapshot &n = after[it.first];
+		uint num_engines = 0;
+		for (const auto &e : n.num_engines) num_engines += e.second;
+		IConsolePrint(CC_DEFAULT, "{}: vehicles {} (recalculated {}), engines recalculated {}{}", it.first, b.num_vehicle, n.num_vehicle, num_engines, b == n ? "" : " MISMATCH");
+		if (!(b == n)) differences++;
+	}
+	IConsolePrint(CC_DEFAULT, "check_group_stats: {} differences", differences);
+	return true;
+}
+
+/**
+ * Debug: show where the cargo in both trains of a combination continues after the split, see GetCouplingSplitVia.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCouplingCargo(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: show where the cargo of a coupled combination continues after the split. Usage: 'coupling_cargo <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v != nullptr && v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) v = GetCouplingCombinationHead(v);
+	if (v == nullptr || !IsTrainCoupled(v)) {
+		IConsolePrint(CC_ERROR, "Combination not found.");
+		return true;
+	}
+	const CouplingSplitRoute route = GetCouplingSplitRoute(v);
+	IConsolePrint(CC_DEFAULT, "Combination {}: split at {}, leader then {}, passive then {}, valid {}", v->unitnumber,
+			route.split_station.base(), route.leader_after.base(), route.passive_after.base(), route.IsValid());
+	if (!route.IsValid()) return true;
+	const Train *passive = GetCoupledPassiveHead(v);
+	for (const Vehicle *unit : { static_cast<const Vehicle *>(v), static_cast<const Vehicle *>(passive) }) {
+		const StationID own_after = (unit == passive) ? route.passive_after : route.leader_after;
+		const StationID other_after = (unit == passive) ? route.leader_after : route.passive_after;
+		uint own = 0, other = 0, elsewhere = 0, capacity = 0;
+		for (const Vehicle *u = unit; u != GetCargoUnitEnd(unit); u = u->Next()) {
+			capacity += u->cargo_cap;
+			for (const CargoPacket *cp : *u->cargo.Packets()) {
+				const StationID via = GetCouplingSplitVia(cp, route.split_station, u->cargo_type);
+				if (via == own_after) {
+					own += cp->Count();
+				} else if (via == other_after) {
+					other += cp->Count();
+				} else {
+					elsewhere += cp->Count();
+				}
+			}
+		}
+		IConsolePrint(CC_DEFAULT, "  {} train {}: capacity {}, continues with this train {}, with the other train {}, elsewhere {}",
+				unit == passive ? "passive" : "leading", unit->unitnumber, capacity, own, other, elsewhere);
+	}
+	return true;
+}
+
+/**
+ * Debug: open the windows of a train, also of the passive train of a coupled combination, to exercise their code.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConOpenTrainWindows(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: open the view, orders, timetable, details, vehicle list and departure windows of a train. Usage: 'open_train_windows <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	ShowVehicleViewWindow(v);
+	ShowOrdersWindow(v);
+	ShowTimetableWindow(v);
+	Window *w = FindWindowById(WindowClass::VehicleView, v->index);
+	if (w != nullptr) w->OnClick({}, WID_VV_SHOW_DETAILS, 1);
+	ShowVehicleListWindow(v->owner, VehicleType::Train);
+	ShowVehicleListWindow(v);
+	if (Station::IsValidID(v->last_station_visited)) ShowDeparturesWindow(v->last_station_visited);
+	MarkWholeScreenDirty();
+	IConsolePrint(CC_DEFAULT, "open_train_windows: opened for train {}{}", v->unitnumber, v->flags.Test(VehicleRailFlag::CoupledPassiveHead) ? " (passive)" : "");
+	return true;
+}
+
+/**
+ * Debug: move every other cargo packet between the two trains of a combination, to test VehicleCargoList::ShiftFiltered.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCouplingShiftCargo(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: move every other cargo packet between the trains of a combination. Usage: 'coupling_shift_cargo <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v != nullptr && v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) v = GetCouplingCombinationHead(v);
+	if (v == nullptr || !IsTrainCoupled(v)) return true;
+	Train *passive = GetCoupledPassiveHead(v);
+	for (bool to_passive : { false, true }) {
+		Vehicle *from_unit = to_passive ? static_cast<Vehicle *>(v) : passive;
+		Vehicle *to_unit = to_passive ? static_cast<Vehicle *>(passive) : v;
+		uint moved = 0;
+		for (Vehicle *from = from_unit; from != GetCargoUnitEnd(from_unit); from = from->Next()) {
+			if (from->cargo.StoredCount() == 0 || from->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != from->cargo.TotalCount()) continue;
+			for (Vehicle *to = to_unit; to != GetCargoUnitEnd(to_unit); to = to->Next()) {
+				if (to->cargo_type != from->cargo_type || to->cargo_cap <= to->cargo.StoredCount()) continue;
+				if (to->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != to->cargo.TotalCount()) continue;
+				bool take = false;
+				moved += from->cargo.ShiftFiltered(to->cargo_cap - to->cargo.StoredCount(), &to->cargo, [&](const CargoPacket *) { take = !take; return take; });
+			}
+		}
+		if (moved > 0) {
+			v->MarkDirty();
+			IConsolePrint(CC_DEFAULT, "coupling_shift_cargo: moved {} to the {} train", moved, to_passive ? "passive" : "leading");
+		}
+	}
+	return true;
+}
+
+/**
+ * Debug: report trains which crashed since the last call, with their coupling state.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConReportCrashedTrains(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: report trains which crashed since the last call. Usage: 'report_crashed_trains'.");
+		return true;
+	}
+	static btree::btree_set<VehicleID> reported;
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (!t->vehstatus.Test(VehState::Crashed) || reported.contains(t->index)) continue;
+		reported.insert(t->index);
+		const Train *mf = t->GetMovingFront();
+		IConsolePrint(CC_WARNING, "Crashed train: id {}, unit {}, group {}, tile {}x{}, order idx {} type {} dest {}, target {}, split partner {}, coupled {}, approach flags speedlimit {} fromorders {}",
+				t->index, t->unitnumber, t->group_id.base(), TileX(mf->tile), TileY(mf->tile), t->cur_real_order_index, t->current_order.GetType(),
+				t->current_order.GetDestination().base(), t->coupling_target, t->split_partner, IsTrainCoupled(t),
+				t->flags.Test(VehicleRailFlag::CouplingSpeedLimit), t->flags.Test(VehicleRailFlag::CouplingFromOrders));
+	}
+	return true;
+}
+
+/**
+ * Debug: show and clear the pause mode, to continue saved games headless.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConForceUnpause(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: show and clear all pause modes. Usage: 'force_unpause'.");
+		return true;
+	}
+	IConsolePrint(CC_DEFAULT, "Pause mode was 0x{:X}", _pause_mode.base());
+	_pause_mode = {};
+	return true;
+}
+
+/**
+ * Debug: list the signals which show the coupling aspect.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConListCouplingSignals(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: list the signals which show the coupling aspect. Usage: 'list_coupling_signals'.");
+		return true;
+	}
+	for (TileIndex tile : GetCouplingSignalTiles()) {
+		if (!IsTileType(tile, TileType::Railway) || !HasSignals(tile)) {
+			IConsolePrint(CC_DEFAULT, "Coupling signal tile {}x{}: no signals any more", TileX(tile), TileY(tile));
+			continue;
+		}
+		IConsolePrint(CC_DEFAULT, "Coupling signal tile {}x{}: coupling bits 0x{:X}, present 0x{:X}, states 0x{:X}", TileX(tile), TileY(tile),
+				GetSignalCouplingAspects(tile), GetPresentSignals(tile), GetSignalStates(tile));
+	}
+	return true;
+}
 
 /**
  * Zoom map to given level.
@@ -3395,8 +4276,8 @@ static bool ConDumpRailTypes(std::span<std::string_view> argv)
 	IConsolePrint(CC_DEFAULT, "    l = no level crossings");
 	IConsolePrint(CC_DEFAULT, "    h = hidden");
 	IConsolePrint(CC_DEFAULT, "    s = no sprite combine");
-	IConsolePrint(CC_DEFAULT, "    a = allow 90° turns");
-	IConsolePrint(CC_DEFAULT, "    d = disallow 90° turns");
+	IConsolePrint(CC_DEFAULT, "    a = allow 90Â° turns");
+	IConsolePrint(CC_DEFAULT, "    d = disallow 90Â° turns");
 	IConsolePrint(CC_DEFAULT, "  Ctrl flags:");
 	IConsolePrint(CC_DEFAULT, "    p = signal graphics callback enabled for programmable pre-signals");
 	IConsolePrint(CC_DEFAULT, "    r = signal graphics callback restricted signal flag enabled");
@@ -4472,6 +5353,29 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("getsysdate",              ConGetSysDate);
 	IConsole::CmdRegister("quit",                    ConExit);
 	IConsole::CmdRegister("resetengines",            ConResetEngines,     ConHookNoNetwork);
+	IConsole::CmdRegister("couple_trains",           ConCoupleTrains);
+	IConsole::CmdRegister("split_train",             ConSplitTrain);
+	IConsole::CmdRegister("couple_approach",         ConCoupleApproach);
+	IConsole::CmdRegister("coupling_order",          ConCouplingOrder);
+	IConsole::CmdRegister("modify_order",            ConModifyOrder);
+	IConsole::CmdRegister("set_wait_time",           ConSetWaitTime);
+	IConsole::CmdRegister("cut_train",               ConCutTrain);
+	IConsole::CmdRegister("start_stop_train",        ConStartStopTrain);
+	IConsole::CmdRegister("on_train_loading",        ConOnTrainLoading);
+	IConsole::CmdRegister("every_ticks",             ConEveryTicks);
+	IConsole::CmdRegister("after_ticks",             ConAfterTicks);
+	IConsole::CmdRegister("debug_coupling",          ConDebugCoupling);
+	IConsole::CmdRegister("dump_rail_tiles",         ConDumpRailTiles);
+	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
+	IConsole::CmdRegister("orders_json",             ConOrdersJson);
+	IConsole::CmdRegister("set_train_group",         ConSetTrainGroup);
+	IConsole::CmdRegister("check_group_stats",       ConCheckGroupStats);
+	IConsole::CmdRegister("coupling_cargo",          ConCouplingCargo);
+	IConsole::CmdRegister("open_train_windows",      ConOpenTrainWindows);
+	IConsole::CmdRegister("coupling_shift_cargo",    ConCouplingShiftCargo);
+	IConsole::CmdRegister("report_crashed_trains",   ConReportCrashedTrains);
+	IConsole::CmdRegister("force_unpause",           ConForceUnpause);
+	IConsole::CmdRegister("list_coupling_signals",   ConListCouplingSignals);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);

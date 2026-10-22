@@ -659,14 +659,16 @@ public:
 	 */
 	bool IsStoppedInDepot() const
 	{
-		assert(this == this->First());
+		/* The passive train of a coupled combination is in the state of the combination. */
+		if (this != this->First()) return this->First()->IsStoppedInDepot();
 		/* Free wagons have no VehState::Stopped state */
 		if (this->IsPrimaryVehicle() && !this->vehstatus.Test(VehState::Stopped)) return false;
 		return this->IsChainInDepot();
 	}
 
 	bool IsWaitingInDepot() const {
-		assert(this == this->First());
+		/* The passive train of a coupled combination is in the state of the combination. */
+		if (this != this->First()) return this->First()->IsWaitingInDepot();
 		return this->current_order.IsType(OT_WAITING) && this->IsChainInDepot();
 	}
 
@@ -805,6 +807,7 @@ public:
 
 	void AddToShared(Vehicle *shared_chain);
 	void RemoveFromShared();
+	void SwapSharedOrderListMembership(Vehicle *other);
 
 	/**
 	 * Get the next vehicle of the shared vehicle chain.

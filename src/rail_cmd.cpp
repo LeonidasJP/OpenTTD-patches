@@ -54,6 +54,8 @@
 
 #include <vector>
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 /** Helper type for lists/vectors of trains */
@@ -3433,7 +3435,10 @@ void DrawSingleSignal(TileIndex tile, const RailTypeInfo *rti, Track track, Sign
 		is_custom_sprite = false;
 	}
 
-	if (!is_custom_sprite && show_restricted && variant == SignalVariant::Electric && _settings_client.gui.show_restricted_signal_recolour) {
+	if (!is_custom_sprite && condition == SignalState::Green && (context.ctx_flags & CSSCF_COUPLING_ASPECT) != 0 && IsCouplingSignalFlashOff()) {
+		/* A default signal which allows coupling flashes: its light is off by drawing it grey. */
+		AddSortableSpriteToDraw(sprite, PALETTE_TO_GREY, x, y, z, {{}, {1, 1, BB_HEIGHT_UNDER_BRIDGE}, {}});
+	} else if (!is_custom_sprite && show_restricted && variant == SignalVariant::Electric && _settings_client.gui.show_restricted_signal_recolour) {
 		DrawRestrictedSignal(type, sprite, x, y, z, BB_HEIGHT_UNDER_BRIDGE, 0);
 	} else {
 		AddSortableSpriteToDraw(sprite, pal, x, y, z, {{}, {1, 1, BB_HEIGHT_UNDER_BRIDGE}, {}});
@@ -3444,13 +3449,14 @@ void DrawSingleSignal(TileIndex tile, const RailTypeInfo *rti, Track track, Sign
 	}
 }
 
-static void DrawSingleSignal(TileIndex tile, const RailTypeInfo *rti, Track track, SignalState condition, SignalOffsets image, uint pos)
+static void DrawSingleSignal(TileIndex tile, const RailTypeInfo *rti, Track track, SignalState condition, SignalOffsets image, uint pos, uint8_t signalbit)
 {
 	SignalType type       = GetSignalType(tile, track);
 	SignalVariant variant = GetSignalVariant(tile, track);
 
 	const TraceRestrictProgram *prog = IsRestrictedSignal(tile) ? GetExistingTraceRestrictProgram(tile, track) : nullptr;
-	DrawSingleSignal(tile, rti, track, condition, image, pos, type, variant, prog, { CSSC_TRACK });
+	const CustomSignalSpriteContextFlags flags = HasSignalCouplingAspect(tile, signalbit) ? CSSCF_COUPLING_ASPECT : CSSCF_NONE;
+	DrawSingleSignal(tile, rti, track, condition, image, pos, type, variant, prog, { CSSC_TRACK, flags });
 }
 
 static void GetSignalXYByTrackdir(TileIndex tile, Trackdir td, bool opposite, uint &x, uint &y)
@@ -4091,7 +4097,7 @@ void DrawTrackBits(TileInfo *ti, TrackBits track)
 static void DrawSignals(TileIndex tile, TrackBits rails, const RailTypeInfo *rti)
 {
 	auto MAYBE_DRAW_SIGNAL = [&](uint8_t signalbit, SignalOffsets image, uint pos, Track track) {
-		if (IsSignalPresent(tile, signalbit)) DrawSingleSignal(tile, rti, track, GetSingleSignalState(tile, signalbit), image, pos);
+		if (IsSignalPresent(tile, signalbit)) DrawSingleSignal(tile, rti, track, GetSingleSignalState(tile, signalbit), image, pos, signalbit);
 	};
 
 	if (!(rails & TRACK_BIT_Y)) {
@@ -4144,16 +4150,16 @@ static void DrawTile_Rail(TileInfo *ti, DrawTileProcParams params)
 		if (HasSignals(ti->tile)) {
 			if (rails == TRACK_BIT_VERT) {
 				const RailTypeInfo *rti2 = GetRailTypeInfo(secondary_railtype);
-				if (IsSignalPresent(ti->tile, 2)) DrawSingleSignal(ti->tile, rti,   TRACK_LEFT, GetSingleSignalState(ti->tile, 2), SIGNAL_TO_NORTH, 0);
-				if (IsSignalPresent(ti->tile, 3)) DrawSingleSignal(ti->tile, rti,   TRACK_LEFT, GetSingleSignalState(ti->tile, 3), SIGNAL_TO_SOUTH, 1);
-				if (IsSignalPresent(ti->tile, 0)) DrawSingleSignal(ti->tile, rti2, TRACK_RIGHT, GetSingleSignalState(ti->tile, 0), SIGNAL_TO_NORTH, 2);
-				if (IsSignalPresent(ti->tile, 1)) DrawSingleSignal(ti->tile, rti2, TRACK_RIGHT, GetSingleSignalState(ti->tile, 1), SIGNAL_TO_SOUTH, 3);
+				if (IsSignalPresent(ti->tile, 2)) DrawSingleSignal(ti->tile, rti,   TRACK_LEFT, GetSingleSignalState(ti->tile, 2), SIGNAL_TO_NORTH, 0, 2);
+				if (IsSignalPresent(ti->tile, 3)) DrawSingleSignal(ti->tile, rti,   TRACK_LEFT, GetSingleSignalState(ti->tile, 3), SIGNAL_TO_SOUTH, 1, 3);
+				if (IsSignalPresent(ti->tile, 0)) DrawSingleSignal(ti->tile, rti2, TRACK_RIGHT, GetSingleSignalState(ti->tile, 0), SIGNAL_TO_NORTH, 2, 0);
+				if (IsSignalPresent(ti->tile, 1)) DrawSingleSignal(ti->tile, rti2, TRACK_RIGHT, GetSingleSignalState(ti->tile, 1), SIGNAL_TO_SOUTH, 3, 1);
 			} else if (rails == TRACK_BIT_HORZ) {
 				const RailTypeInfo *rti2 = GetRailTypeInfo(secondary_railtype);
-				if (IsSignalPresent(ti->tile, 3)) DrawSingleSignal(ti->tile, rti,  TRACK_UPPER, GetSingleSignalState(ti->tile, 3), SIGNAL_TO_WEST, 4);
-				if (IsSignalPresent(ti->tile, 2)) DrawSingleSignal(ti->tile, rti,  TRACK_UPPER, GetSingleSignalState(ti->tile, 2), SIGNAL_TO_EAST, 5);
-				if (IsSignalPresent(ti->tile, 1)) DrawSingleSignal(ti->tile, rti2, TRACK_LOWER, GetSingleSignalState(ti->tile, 1), SIGNAL_TO_WEST, 6);
-				if (IsSignalPresent(ti->tile, 0)) DrawSingleSignal(ti->tile, rti2, TRACK_LOWER, GetSingleSignalState(ti->tile, 0), SIGNAL_TO_EAST, 7);
+				if (IsSignalPresent(ti->tile, 3)) DrawSingleSignal(ti->tile, rti,  TRACK_UPPER, GetSingleSignalState(ti->tile, 3), SIGNAL_TO_WEST, 4, 3);
+				if (IsSignalPresent(ti->tile, 2)) DrawSingleSignal(ti->tile, rti,  TRACK_UPPER, GetSingleSignalState(ti->tile, 2), SIGNAL_TO_EAST, 5, 2);
+				if (IsSignalPresent(ti->tile, 1)) DrawSingleSignal(ti->tile, rti2, TRACK_LOWER, GetSingleSignalState(ti->tile, 1), SIGNAL_TO_WEST, 6, 1);
+				if (IsSignalPresent(ti->tile, 0)) DrawSingleSignal(ti->tile, rti2, TRACK_LOWER, GetSingleSignalState(ti->tile, 0), SIGNAL_TO_EAST, 7, 0);
 			} else {
 				DrawSignals(ti->tile, rails, rti);
 			}

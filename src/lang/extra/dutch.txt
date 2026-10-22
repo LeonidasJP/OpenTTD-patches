@@ -119,3 +119,52 @@ STR_INTRO_TOOLTIP_NEWGRF_SETTINGS                               :{BLACK}NewGRF-i
 STR_INTRO_TOOLTIP_AI_SETTINGS                                   :{BLACK}AI-instellingen openen
 STR_INTRO_TOOLTIP_GAMESCRIPT_SETTINGS                           :{BLACK}Spelscript-instellingen openen
 STR_INTRO_CAPTION_TRADITIONAL                                   :{WHITE}OpenTTD {REV}
+
+STR_ERROR_CAN_T_COUPLE_TRAINS                                   :{WHITE}Kan treinen niet koppelen...
+STR_ERROR_CAN_T_SPLIT_COUPLED_TRAIN                             :{WHITE}Kan trein niet splitsen...
+STR_ERROR_TRAIN_COUPLING_MUST_BE_STOPPED_IN_STATION             :{WHITE}... treinen moeten stilstaan langs een perron
+STR_ERROR_TRAIN_COUPLING_NOT_ADJACENT                           :{WHITE}... treinen staan niet direct achter elkaar
+STR_ERROR_TRAIN_COUPLING_ALREADY_COUPLED                        :{WHITE}... trein is al gekoppeld aan een andere trein
+STR_ERROR_TRAIN_COUPLING_NOT_COUPLED                            :{WHITE}... trein is niet gekoppeld aan een andere trein
+STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED                     :{WHITE}... gekoppelde treinen kunnen alleen omgebouwd of gestart/gestopt worden
+STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER                    :{WHITE}... eerst een Splitsen-order nodig voor een volgende Koppelen-order
+STR_ERROR_TRAIN_COUPLING_NO_GROUPS                              :{WHITE}... er zijn geen treingroepen
+STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... kies een eigen trein met orders
+STR_ORDER_COUPLING_MODE_NONE                                    :Niet koppelen of splitsen
+STR_ORDER_COUPLING_MODE_COUPLE                                  :Hier treinen koppelen
+STR_ORDER_COUPLING_MODE_SPLIT                                   :Hier trein splitsen
+STR_ORDER_COUPLING_LEADER_WAITING                               :Koppelen: wachtende trein leidt
+STR_ORDER_COUPLING_LEADER_ARRIVING                              :Koppelen: aankomende trein leidt
+STR_ORDER_COUPLING_FILTER_ANY                                   :Koppelen aan: elke trein
+STR_ORDER_COUPLING_FILTER_GROUP                                 :Koppelen aan: trein in groep...
+STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Koppelen aan: trein met orders van...
+STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[splitsen]
+STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[koppelen: elke trein{STRING}]
+STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[koppelen: groep {GROUP}{STRING}]
+STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[koppelen: orders van {VEHICLE}{STRING}]
+STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[koppelen: {PUSH_COLOUR}{RED}onbepaald{POP_COLOUR}{STRING}]
+STR_ORDER_COUPLING_ARRIVING_LEADS                               :, aankomende trein leidt
+STR_ORDER_DEPOT_COUPLED_ALLOWED_MENU                            :Gekoppelde combinatie mag in depot stoppen
+STR_ORDER_DEPOT_COUPLED_ALLOWED                                 :{SPACE}[gekoppeld toegestaan]
+STR_ORDER_CONDITIONAL_COUPLING_ROLE                             :Koppelrol
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLED                     :Gekoppeld aan een andere trein
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_LEADING                     :Leidt een gekoppelde combinatie
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_SPLIT_OFF_LAST              :Afgesplitst bij laatste splitsing
+STR_ORDER_CONDITIONAL_COUPLING_ROLE_COUPLING_FAILED             :Laatste koppeling mislukt
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP                           :{WHITE}Waarschuwing: een gekoppelde trein gebruikt deze orders
+STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}De gekoppelde combinatie stopt in het depot. Zet "Gekoppelde combinatie mag in depot stoppen" aan om deze waarschuwing te voorkomen
+STR_VEHICLE_STATUS_TRAIN_COUPLED_PASSIVE                        :{LTBLUE}Gekoppeld aan {VEHICLE}
+STR_VEHICLE_STATUS_TRAIN_COUPLING_APPROACH                      :{LTBLUE}Koppelen aan {VEHICLE}, {VELOCITY}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_COUPLED                    :{LTBLUE}In- en uitladen, gekoppeld aan {VEHICLE}
+STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING              :{LTBLUE}In- en uitladen, wacht op koppeling
+STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
+STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} heeft twee Koppelen-orders zonder Splitsen-order ertussen
+STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} heeft een Koppelen-order met een verwijderde groep of orderlijst
+STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Gekoppelde combinatie naar depot sturen
+STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}Deze trein is gekoppeld aan een andere trein. De gekoppelde combinatie naar een depot sturen om daar te stoppen?
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :De maximaal toegestane snelheid voor treinen die een bezet perron oprijden om aan een andere trein te koppelen, vanaf het laatste sein voor het perron
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Maximumsnelheid laatste nadering bij koppelen: {STRING2}
+STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED_HELPTEXT          :De maximaal toegestane snelheid voor treinen op de laatste tegel voor het koppelen aan een andere trein
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS                       :Standaardseinen laten knipperen voor koppelende treinen: {STRING2}
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS_HELPTEXT              :Laat standaardseinen groen knipperen als een trein een bezet perron in mag rijden om te koppelen aan de trein die daar wacht. Staat dit uit, dan tonen deze seinen gewoon groen. Dit heeft geen invloed op NewGRF-seinen.

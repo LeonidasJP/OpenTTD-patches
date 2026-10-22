@@ -49,6 +49,7 @@
 #include "misc_cmd.h"
 #include "tile_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "vehicle_cmd.h"
 #include "tbtr_template_vehicle_cmd.h"
 #include "script/api/script_event_types.hpp"
@@ -681,6 +682,12 @@ int GetTrainStopLocation(StationID station_id, TileIndex tile, Train *v, bool up
 		}
 	}
 
+	if (front->coupling_target != VehicleID::Invalid() && IsCouplingApproachPlatformTile(front, tile)) {
+		/* Stop directly behind the train to couple to, regardless of the stop location of the order. */
+		std::optional<int> coupling_stop = GetCouplingStopLocation(front, DirToDiagDir(v->GetMovingDirection()));
+		if (coupling_stop.has_value()) result = *coupling_stop;
+	}
+
 	return result;
 }
 
@@ -1019,7 +1026,11 @@ static void ApplyLookAheadItem(const Train *v, const TrainReservationLookAheadIt
 		case TRLIT_STATION: {
 			const StationID st = static_cast<StationID>(item.data_id);
 			if (order->ShouldStopAtStation(last_station_visited, st, Waypoint::GetIfValid(st) != nullptr)) {
-				limit_advisory_speed(item.start + PredictStationStoppingLocation(v, order, item.end - item.start, st), 0, item.z_pos);
+				/* When coupling, the stop is handled by ApplyCouplingLookAhead. */
+				const Train *coupling_target = (v->coupling_target != VehicleID::Invalid() && IsValidDiagDirection(v->coupling_dir)) ? GetCouplingApproachTarget(v) : nullptr;
+				if (coupling_target == nullptr || GetStationIndex(coupling_target->tile) != st) {
+					limit_advisory_speed(item.start + PredictStationStoppingLocation(v, order, item.end - item.start, st), 0, item.z_pos);
+				}
 				last_station_visited = st;
 			} else if (order->IsType(OT_GOTO_WAYPOINT) && order->GetDestination() == st && order->GetWaypointFlags().Test(OrderWaypointFlag::Reverse)) {
 				limit_advisory_speed(item.start + v->gcache.cached_total_length, 0, item.z_pos);
@@ -1060,6 +1071,40 @@ static void ApplyLookAheadItem(const Train *v, const TrainReservationLookAheadIt
 
 		case TRLIT_SPEED_ADAPTATION:
 			break;
+	}
+}
+
+/**
+ * Apply the speed limits of a train which drives into a platform to couple to another train, using the reservation look-ahead.
+ * The train enters the platform with at most the coupling speed, and brakes to a stop at the coupling location.
+ * @param v The approaching train.
+ * @param max_speed The maximum speed to limit.
+ * @param stats The deceleration stats of the train.
+ */
+static void ApplyCouplingLookAhead(const Train *v, int &max_speed, const TrainDecelerationStats &stats)
+{
+	if (!IsValidDiagDirection(v->coupling_dir)) return;
+	const Train *target = GetCouplingApproachTarget(v);
+	if (target == nullptr) return;
+	std::optional<int> coupling_stop = GetCouplingStopLocation(v, v->coupling_dir);
+	if (!coupling_stop.has_value()) return;
+
+	const int current_position = v->lookahead->current_position;
+	const StationID station = GetStationIndex(target->tile);
+	const Train *moving_front = v->GetMovingFront();
+	const int front_half_length = (moving_front->gcache.cached_veh_length + (v->IsDrivingBackwards() ? 2 : 1)) / 2;
+
+	for (const TrainReservationLookAheadItem &item : v->lookahead->items) {
+		if (item.type == TRLIT_STATION && static_cast<StationID>(item.data_id) == station) {
+			/* Enter the platform with at most the coupling speed. */
+			LimitSpeedFromLookAhead(max_speed, stats, current_position, item.start, _settings_game.vehicle.train_coupling_speed, item.z_pos - stats.z_pos);
+
+			/* Approach the coupling location with at most the final coupling speed on the last tile, and stop there. */
+			const int stop_position = item.start + *coupling_stop + front_half_length;
+			LimitSpeedFromLookAhead(max_speed, stats, current_position, stop_position - TILE_SIZE, _settings_game.vehicle.train_coupling_final_speed, item.z_pos - stats.z_pos);
+			LimitSpeedFromLookAhead(max_speed, stats, current_position, stop_position, 0, item.z_pos - stats.z_pos);
+			return;
+		}
 	}
 }
 
@@ -1202,6 +1247,30 @@ Train::MaxSpeedInfo Train::GetCurrentMaxSpeedInfoInternal(bool update_state) con
 		advisory_max_speed = std::min<int>(advisory_max_speed, ReversingDistanceTargetSpeed(this));
 	}
 
+	if (this->split_partner != VehicleID::Invalid()) {
+		if (update_state) UpdateSplitPartner(const_cast<Train *>(this));
+		if (IsTrainBlockedBySplitPartner(this)) {
+			/* Do not drive into the train from which this train was just split. */
+			max_speed = 0;
+			advisory_max_speed = 0;
+		}
+	}
+
+	std::optional<int> coupling_distance;
+	if (this->coupling_target != VehicleID::Invalid()) {
+		const Train *moving_front = this->GetMovingFront();
+		if (IsCouplingApproachPlatformTile(this, moving_front->tile)) {
+			coupling_distance = GetCouplingStopDistance(this);
+			max_speed = std::min<int>(max_speed, _settings_game.vehicle.train_coupling_speed);
+		} else if (this->flags.Test(VehicleRailFlag::CouplingSpeedLimit) || IsValidDiagDirection(this->coupling_dir)) {
+			/* The platform is reserved up to the train to couple to: pass the signal into the platform with at most the coupling speed. */
+			max_speed = std::min<int>(max_speed, _settings_game.vehicle.train_coupling_speed);
+		}
+		if (coupling_distance.has_value() && *coupling_distance <= (int)TILE_SIZE) {
+			max_speed = std::min<int>(max_speed, _settings_game.vehicle.train_coupling_final_speed);
+		}
+	}
+
 	if (this->UsingRealisticBraking()) {
 		if (this->lookahead != nullptr) {
 			if (update_state && this->lookahead->zpos_refresh_remaining == 0) {
@@ -1223,6 +1292,7 @@ Train::MaxSpeedInfo Train::GetCurrentMaxSpeedInfoInternal(bool update_state) con
 			for (const TrainReservationLookAheadItem &item : this->lookahead->items) {
 				ApplyLookAheadItem(this, item, max_speed, advisory_max_speed, current_order_index, order, last_station_visited, stats, this->lookahead->current_position);
 			}
+			if (this->coupling_target != VehicleID::Invalid()) ApplyCouplingLookAhead(this, max_speed, stats);
 			if (this->lookahead->flags.Test(TrainReservationLookAheadFlag::ApplyAdvisory)) {
 				max_speed = std::min(max_speed, advisory_max_speed);
 			}
@@ -1937,7 +2007,7 @@ static void NormaliseDualHeads(Train *t)
  * Normalise the sub types of the parts in this chain.
  * @param chain the chain to normalise.
  */
-static void NormaliseSubtypes(Train *chain)
+void NormaliseSubtypes(Train *chain)
 {
 	/* Nothing to do */
 	if (chain == nullptr) return;
@@ -2272,6 +2342,9 @@ CommandCost CmdMoveRailVehicle(DoCommandFlags flags, VehicleID src_veh, VehicleI
 
 	if (src->IsRearDualheaded()) return CommandCost(STR_ERROR_REAR_ENGINE_FOLLOW_FRONT);
 
+	/* The composition of coupled trains can not be changed. */
+	if (IsTrainCoupled(src_head) || (dst_head != nullptr && IsTrainCoupled(dst_head))) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
+
 	/* When moving all wagons, we can't have the same src_head and dst_head */
 	if (move_chain && src_head == dst_head) return CommandCost();
 
@@ -2458,6 +2531,9 @@ CommandCost CmdSellRailWagon(DoCommandFlags flags, Vehicle *t, bool sell_chain, 
 	Train *first = v->First();
 
 	if (v->IsRearDualheaded()) return CommandCost(STR_ERROR_REAR_ENGINE_FOLLOW_FRONT);
+
+	/* Coupled trains can not be sold, they have to be split first. */
+	if (IsTrainCoupled(first)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
 
 	/* First make a backup of the order of the train. That way we can do
 	 * whatever we want with the order and later on easily revert. */
@@ -3027,6 +3103,23 @@ static void AdvanceWagonsAfterSwap(Train *moving_front)
 	}
 }
 
+/**
+ * Turn a stationary train around by swapping its vehicles, without changing its order or reservation state.
+ * Used to get the right orientation for coupling to another train.
+ * @param consist The train to turn around.
+ */
+void FlipTrainForCoupling(Train *consist)
+{
+	Train *moving_front = consist->GetMovingFront();
+	AdvanceWagonsBeforeSwap(moving_front);
+	ReverseTrainSwapVehicles(consist);
+	AdvanceWagonsAfterSwap(moving_front);
+
+	consist->flags.Flip(VehicleRailFlag::Reversed);
+	consist->ConsistChanged(CCF_TRACK);
+	for (Train *u = consist; u != nullptr; u = u->Next()) u->UpdateViewport(false, false);
+}
+
 static bool IsWholeTrainInsideDepot(const Train *v)
 {
 	for (const Train *u = v; u != nullptr; u = u->Next()) {
@@ -3295,6 +3388,8 @@ CommandCost CmdReverseTrainDirection(DoCommandFlags flags, VehicleID veh_id, boo
 		}
 
 		Train *front = v->First();
+		if (IsTrainCoupled(front)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
+
 		/* make sure the vehicle is stopped in the depot */
 		if (!front->IsStoppedInDepot() && !front->IsVirtual()) {
 			return CommandCost(STR_ERROR_TRAINS_CAN_ONLY_BE_ALTERED_INSIDE_A_DEPOT);
@@ -3829,7 +3924,7 @@ static void ClearPathReservation(const Train *v, TileIndex tile, Trackdir track_
 		/* If the new tile is not a further tile of the same station, we
 		 * clear the reservation for the whole platform. */
 		if (!IsCompatibleTrainStationTile(new_tile, tile)) {
-			SetRailStationPlatformReservation(tile, ReverseDiagDir(dir), false);
+			SetRailStationPlatformReservation(tile, ReverseDiagDir(dir), false, v);
 		}
 	} else {
 		/* Any other tile */
@@ -4005,7 +4100,8 @@ static PBSTileInfo ExtendTrainReservation(const Train *v, const PBSTileInfo &ori
 			 * orders, so we might cause pathfinding to fail later on if we find a choice.
 			 * This failure would cause a bogus call to TryReserveSafePath which might reserve
 			 * a wrong path not leading to our next destination. */
-			if (HasReservedTracks(ft.new_tile, TrackdirBitsToTrackBits(TrackdirReachesTrackdirs(ft.old_td)))) break;
+			if (HasReservedTracks(ft.new_tile, TrackdirBitsToTrackBits(TrackdirReachesTrackdirs(ft.old_td))) &&
+					!(v->coupling_target != VehicleID::Invalid() && IsCouplingApproachPlatformTile(v, ft.new_tile))) break;
 
 			/* If we did skip some tiles, backtrack to the first skipped tile so the pathfinder
 			 * actually starts its search at the first unreserved tile. */
@@ -4430,6 +4526,9 @@ bool _long_reserve_disabled = false;
 static void TryLongReserveChooseTrainTrack(Train *v, TileIndex tile, Trackdir td, bool force_res, ChooseTrainTrackLookAheadState lookahead_state)
 {
 	if (_long_reserve_disabled) return;
+
+	/* A reservation into the platform of the train to couple to ends there, the train stops to couple. */
+	if (v->coupling_target != VehicleID::Invalid() && IsRailStationTile(tile) && IsCouplingApproachPlatformTile(v, tile)) return;
 
 	const bool long_enough = IsReservationLookAheadLongEnough(v, lookahead_state);
 
@@ -5077,7 +5176,16 @@ static void TrainEnterStation(Train *consist, StationID station)
 	consist->force_proceed = TFP_NONE;
 	InvalidateWindowData(WindowClass::VehicleView, consist->index);
 
-	consist->BeginLoading();
+	/* At the station where a combination splits, the cargo first moves to the train with which it continues. */
+	const bool coupled_split = IsTrainCoupled(consist) && WillCombinationSplitAt(consist, station);
+	if (coupled_split) ExchangeCargoBeforeSplit(consist);
+	{
+		CouplingSplitStagingScope staging(coupled_split);
+		consist->BeginLoading();
+	}
+
+	if (consist->coupling_target != VehicleID::Invalid()) OnCouplingTrainEnteredStation(consist);
+	if (IsTrainCoupled(consist)) OnCombinationEnteredStation(consist, station);
 
 	TileIndex station_tile = consist->GetStationLoadingVehicle()->tile;
 	TriggerStationRandomisation(st, station_tile, StationRandomTrigger::VehicleArrives);
@@ -5288,6 +5396,9 @@ static uint CheckTrainCollision(Train *v, Train *moving_front)
 		 * If enabled, only skip immediate neighbors. */
 		if (!_settings_game.vehicle.train_self_collision || v == moving_front->Next() || v == moving_front->Previous()) return 0;
 	}
+
+	/* A train driving into a platform to couple must never crash into the train it couples to. */
+	if (IsCouplingApproachCollision(v->First(), moving_front->First())) return 0;
 
 	int x_diff = v->x_pos - moving_front->x_pos;
 	int y_diff = v->y_pos - moving_front->y_pos;
@@ -6043,6 +6154,7 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 					if (v->IsMovingFront() && HasPbsSignalOnTrackdir(gp.new_tile, tdir)) {
 						SetSignalStateByTrackdir(gp.new_tile, tdir, SignalState::Red);
 						MarkSingleSignalDirty(gp.new_tile, tdir);
+						if (IsValidDiagDirection(first->coupling_dir)) first->flags.Set(VehicleRailFlag::CouplingSpeedLimit);
 					}
 
 					/* Clear any track reservation when the last vehicle leaves the tile */
@@ -6848,6 +6960,8 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 	/* exit if train is stopped */
 	if (consist->vehstatus.Test(VehState::Stopped) && consist->cur_speed == 0) return true;
 
+	if (!mode) UpdateCouplingApproachFromOrders(consist);
+
 	bool valid_order = !consist->current_order.IsType(OT_NOTHING) && consist->current_order.GetType() != OT_CONDITIONAL && !consist->current_order.IsSlotCounterOrder() && !consist->current_order.IsType(OT_LABEL);
 	if (ProcessOrders(consist) && CheckReverseTrain(consist)) {
 		consist->wait_counter = 0;
@@ -6957,6 +7071,16 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 		return true;
 	}
 
+	if (consist->split_partner != VehicleID::Invalid()) {
+		UpdateSplitPartner(consist);
+		if (IsTrainBlockedBySplitPartner(consist)) {
+			/* Do not drive into the train from which this train was just split. */
+			consist->cur_speed = 0;
+			consist->subspeed = 0;
+			return true;
+		}
+	}
+
 	int j;
 	{
 		Train::MaxSpeedInfo max_speed_info = consist->GetCurrentMaxSpeedInfoAndUpdate();
@@ -7024,6 +7148,8 @@ Money Train::GetRunningCost() const
 {
 	Money cost = 0;
 	const Train *v = this;
+	/* The passive train of a coupled combination pays for its own vehicles. */
+	const Vehicle *unit_end = GetCargoUnitEnd(this);
 
 	do {
 		const Engine *e = v->GetEngine();
@@ -7036,10 +7162,13 @@ Money Train::GetRunningCost() const
 		if (v->IsMultiheaded()) cost_factor /= 2;
 
 		cost += GetPrice(e->VehInfo<RailVehicleInfo>().running_cost_class, cost_factor, e->GetGRF());
-	} while ((v = v->GetNextVehicle()) != nullptr);
+	} while ((v = v->GetNextVehicle()) != nullptr && v != unit_end);
 
-	if (this->cur_speed == 0) {
-		if (this->IsInDepot()) {
+	/* The speed and position of the passive train of a coupled combination are those of the combination. */
+	const Train *front = IsCoupledPassiveTrain(this) ? GetCouplingCombinationHead(this) : this;
+	if (front == nullptr) front = this;
+	if (front->cur_speed == 0) {
+		if (front->IsInDepot()) {
 			/* running costs if in depot */
 			cost = CeilDivT<Money>(cost, _settings_game.difficulty.vehicle_costs_in_depot);
 		} else {
@@ -7063,6 +7192,7 @@ bool Train::Tick()
 		if (!(this->vehstatus.Test(VehState::Stopped) || this->IsWaitingInDepot()) || this->cur_speed > 0) this->running_ticks++;
 
 		this->current_order_time++;
+		if (this->flags.Test(VehicleRailFlag::CoupledCombination)) TickCoupledPassiveTrain(this);
 
 		if (!TrainLocoHandler(this, false)) return false;
 
@@ -7134,6 +7264,15 @@ void Train::OnNewDay()
 
 void Train::OnPeriodic()
 {
+	if (IsCoupledPassiveTrain(this) && this->running_ticks != 0) {
+		/* Running costs of the passive train of a coupled combination. */
+		CommandCost cost(ExpensesType::TrainRun, this->GetRunningCost() * this->running_ticks / (DAYS_IN_YEAR  * DAY_TICKS));
+		this->profit_this_year -= cost.GetCost();
+		this->running_ticks = 0;
+		SubtractMoneyFromCompanyFract(this->owner, cost);
+		SetWindowDirty(WindowClass::VehicleDetails, this->index);
+		DirtyVehicleListWindowForVehicle(this);
+	}
 	if (this->IsFrontEngine()) {
 		CheckIfTrainNeedsService(this);
 
@@ -7824,6 +7963,7 @@ CommandCost CmdTemplateReplaceVehicle(DoCommandFlags flags, VehicleID veh_id)
 	if (incoming == nullptr || !incoming->IsPrimaryVehicle() || !incoming->IsChainInDepot()) {
 		return CMD_ERROR;
 	}
+	if (IsTrainCoupled(incoming)) return CommandCost(STR_ERROR_TRAIN_COUPLING_COMBINATION_LOCKED);
 
 	Train *outgoing = incoming;
 	CommandCost cost = CmdTemplateReplaceVehicle(flags, incoming, outgoing);

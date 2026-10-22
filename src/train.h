@@ -47,6 +47,13 @@ enum class VehicleRailFlag : uint8_t {
 	ConsistSpeedReduction     = 20, ///< One or more vehicles in this consist may be in a depot or on a bridge (may be false positive but not false negative).
 	PendingSpeedRestriction   = 21, ///< This vehicle has one or more pending speed restriction changes.
 	SpeedAdaptationExempt     = 22, ///< This vehicle is exempt from train speed adaptation.
+	CoupledCombination        = 23, ///< This train is a combination of two coupled trains (head only), see TrainCoupling.
+	CoupledPassiveHead        = 24, ///< This vehicle is the head of the passive train in a coupled combination, see TrainCoupling.
+	CouplingArrivingLeads     = 25, ///< When coupling to Train::coupling_target, this (arriving) train leads the combination.
+	CouplingSpeedLimit        = 26, ///< This train passed the last signal before coupling, the coupling speed limit applies.
+	CouplingFromOrders        = 27, ///< Train::coupling_target was set by a couple order (and not by a command).
+	SplitOffLast              = 28, ///< This train was the passive train at its last split, see OrderConditionVariable::CouplingRole.
+	CouplingFailedLast        = 29, ///< This train left its last couple order without coupling, see OrderConditionVariable::CouplingRole.
 };
 using VehicleRailFlags = EnumBitSet<VehicleRailFlag, uint32_t>;
 
@@ -177,6 +184,10 @@ struct Train final : public GroundVehicle<Train, VehicleType::Train> {
 	uint16_t speed_restriction = 0;
 	uint16_t signal_speed_restriction = 0;
 	uint16_t crash_anim_pos = 0; ///< Crash animation counter, also used for realistic braking train brake overheating
+
+	VehicleID coupling_target = VehicleID::Invalid(); ///< Train in a station platform to which this train is driving to couple, see train_coupling.h.
+	DiagDirection coupling_dir = DiagDirection::Invalid;    ///< Direction in which this train drives into the platform of #coupling_target, set once the platform is reserved.
+	VehicleID split_partner = VehicleID::Invalid();   ///< Train from which this train was just split, which this train may not drive into, see train_coupling.h.
 
 	/** Create new Train object. @copydoc GroundVehicle::GroundVehicle */
 	Train(VehicleID index) : GroundVehicleBase(index) {}

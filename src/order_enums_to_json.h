@@ -32,6 +32,20 @@ NLOHMANN_JSON_SERIALIZE_ENUM(OrderStopLocation, {
 	{OrderStopLocation::Through, "through"}
 })
 
+NLOHMANN_JSON_SERIALIZE_ENUM(OrderCouplingMode, {
+	{OrderCouplingMode::End, nullptr},
+	{OrderCouplingMode::None, "none"},
+	{OrderCouplingMode::Couple, "couple"},
+	{OrderCouplingMode::Split, "split"}
+})
+
+NLOHMANN_JSON_SERIALIZE_ENUM(OrderCouplingFilter, {
+	{OrderCouplingFilter::End, nullptr},
+	{OrderCouplingFilter::Any, "any"},
+	{OrderCouplingFilter::Group, "group"},
+	{OrderCouplingFilter::OrderList, "order-list"}
+})
+
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderLabelSubType, {
 	{static_cast<OrderLabelSubType>(-1), nullptr},
 	{OLST_TEXT, "text"},
@@ -154,7 +168,8 @@ NLOHMANN_JSON_SERIALIZE_ENUM(OrderConditionVariable, {
 	{OrderConditionVariable::DispatchSlot, "dispatch-slot" },
 	{OrderConditionVariable::CargoWaitingAmountPercentage, "cargo-waiting-amount-percentage" },
 	{OrderConditionVariable::VehicleInSlotGroup, "vehicle-in-slot-group" },
-	{OrderConditionVariable::DrivingBackwards, "driving-backwards" }
+	{OrderConditionVariable::DrivingBackwards, "driving-backwards" },
+	{OrderConditionVariable::CouplingRole, "coupling-role" }
 })
 
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderConditionComparator, {

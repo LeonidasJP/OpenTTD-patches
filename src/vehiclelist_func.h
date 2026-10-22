@@ -12,6 +12,7 @@
 
 #include "order_base.h"
 #include "vehicle_base.h"
+#include "train_coupling.h"
 
 /**
  * Find vehicles matching an order.
@@ -36,7 +37,8 @@ void FindVehiclesWithOrder(VehiclePredicate veh_pred, OrderPredicate ord_pred, V
 
 			/* An order matches, we can add all shared vehicles to the list. */
 			for (; v != nullptr; v = v->NextShared()) {
-				veh_func(v);
+				/* The heads of passive trains in coupled combinations are listed as if they were not coupled. */
+				if (IsPrimaryOrCoupledPassiveVehicle(v)) veh_func(v);
 			}
 			break;
 		}

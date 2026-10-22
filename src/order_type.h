@@ -163,6 +163,26 @@ enum OrderNonStopFlags : uint8_t {
 };
 
 /**
+ * Coupling action of a train at a station order, see train_coupling.h.
+ */
+enum class OrderCouplingMode : uint8_t {
+	None   = 0, ///< No coupling or splitting.
+	Couple = 1, ///< Couple to another train at this station, or wait for another train to couple.
+	Split  = 2, ///< Split from the combination at this station.
+	End,        ///< End marker.
+};
+
+/**
+ * Which trains may be coupled to at a station order with #OrderCouplingMode::Couple.
+ */
+enum class OrderCouplingFilter : uint8_t {
+	Any       = 0, ///< Any train.
+	Group     = 1, ///< Trains of a group.
+	OrderList = 2, ///< Trains with a specific (shared) order list.
+	End,           ///< End marker.
+};
+
+/**
  * Where to stop the trains.
  */
 enum class OrderStopLocation : uint8_t {
@@ -202,6 +222,7 @@ DECLARE_ENUM_AS_BIT_SET(OrderDepotActionFlags)
  */
 enum class OrderDepotExtraFlag : uint8_t {
 	Specific            = 0, ///< This order is for a specific depot.
+	CoupledAllowed      = 1, ///< A coupled combination may stop in the depot without a news message, see train_coupling.h.
 };
 using OrderDepotExtraFlags = EnumBitSet<OrderDepotExtraFlag, uint8_t>;
 
@@ -241,7 +262,19 @@ enum class OrderConditionVariable : uint8_t {
 	CargoWaitingAmountPercentage = 20, ///< Skip based on the amount of a specific cargo waiting at station, relative to the vehicle capacity
 	VehicleInSlotGroup           = 21, ///< Test if vehicle is in slot group
 	DrivingBackwards             = 22, ///< Skip when the train is driving backwards, upstream value = 8
+	CouplingRole                 = 23, ///< Skip based on the coupling role of the train, see OrderCouplingRole.
 	End, ///< End marker.
+};
+
+/**
+ * Coupling roles tested by OrderConditionVariable::CouplingRole, stored in the condition value.
+ */
+enum class OrderCouplingRole : uint8_t {
+	Coupled        = 0, ///< The train is part of a coupled combination.
+	Leading        = 1, ///< The train leads a coupled combination.
+	SplitOffLast   = 2, ///< The train was split off (the passive train) at its last split.
+	CouplingFailed = 3, ///< The train left its last couple order without coupling.
+	End,                ///< End marker.
 };
 
 inline bool ConditionVariableHasStationID(OrderConditionVariable ocv)
@@ -299,6 +332,11 @@ enum ModifyOrderFlags : uint8_t {
 	MOF_COLOUR,          ///< Change the colour value
 	MOF_LABEL_TEXT,      ///< Change the label text value
 	MOF_DEPARTURES_SUBTYPE, ///< Change the label departures subtype
+	MOF_COUPLING_MODE,   ///< Passes an OrderCouplingMode.
+	MOF_COUPLING_LEADER, ///< Passes whether the arriving train leads the combination.
+	MOF_COUPLING_FILTER, ///< Passes an OrderCouplingFilter.
+	MOF_COUPLING_FILTER_ID, ///< Passes the GroupID or OrderListID of the coupling filter.
+	MOF_DEPOT_COUPLED_ALLOWED, ///< Passes whether a coupled combination may stop in the depot.
 	MOF_END
 };
 

@@ -43,6 +43,8 @@
 #include "schdispatch.h"
 #include "timetable_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
+#include "group.h"
 #include "train.h"
 
 #include "table/strings.h"
@@ -84,7 +86,7 @@ static CommandCost CmdInsertOrderIntl(DoCommandFlags flags, Vehicle *v, VehicleO
 void IntialiseOrderDestinationRefcountMap()
 {
 	ClearOrderDestinationRefcountMap();
-	for (const Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (const Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		if (v != v->FirstShared()) continue;
 		for (const Order *order : v->Orders()) {
 			if (order->IsType(OT_GOTO_STATION) || order->IsType(OT_GOTO_WAYPOINT) || order->IsType(OT_IMPLICIT)) {
@@ -985,7 +987,7 @@ CommandCost CmdDuplicateOrder(DoCommandFlags flags, VehicleID veh_id, VehicleOrd
 {
 	Vehicle *v = Vehicle::GetIfValid(veh_id);
 
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1017,7 +1019,7 @@ CommandCost CmdSetRouteOverlayColour(DoCommandFlags flags, VehicleID veh_id, Col
 	if (colour >= Colours::End) return CMD_ERROR;
 
 	Vehicle *v = Vehicle::GetIfValid(veh_id);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle() || v->orders == nullptr) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v) || v->orders == nullptr) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1030,7 +1032,7 @@ CommandCost CmdSetRouteOverlayColour(DoCommandFlags flags, VehicleID veh_id, Col
 
 static CommandCost PreInsertOrderCheck(Vehicle *v, const Order &new_order, CmdInsertOrderIntlFlags insert_flags)
 {
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1276,6 +1278,12 @@ static CommandCost PreInsertOrderCheck(Vehicle *v, const Order &new_order, CmdIn
 					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
 					break;
 
+				case OrderConditionVariable::CouplingRole:
+					if (v->type != VehicleType::Train) return CMD_ERROR;
+					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
+					if (new_order.GetConditionValue() >= to_underlying(OrderCouplingRole::End)) return CMD_ERROR;
+					break;
+
 				case OrderConditionVariable::Unconditionally:
 					if (occ != OrderConditionComparator::Equal) return CMD_ERROR;
 					if (new_order.GetConditionValue() != 0) return CMD_ERROR;
@@ -1405,6 +1413,11 @@ static CommandCost CmdInsertOrderIntl(DoCommandFlags flags, Vehicle *v, VehicleO
 
 	if (v->GetNumOrders() >= MAX_VEH_ORDER_ID) return CommandCost(STR_ERROR_TOO_MANY_ORDERS);
 	if (v->orders == nullptr && !OrderList::CanAllocateItem()) return CommandCost(STR_ERROR_NO_MORE_SPACE_FOR_ORDERS);
+
+	if (new_order.GetCouplingMode() == OrderCouplingMode::Couple) {
+		if (v->type != VehicleType::Train) return CMD_ERROR;
+		if (!IsCouplingOrderSequenceValid(v->orders, sel_ord, OrderCouplingMode::Couple, true)) return CommandCost(STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER);
+	}
 
 	if (flags.Test(DoCommandFlag::Execute)) {
 		InsertOrder(v, Order(new_order), sel_ord);
@@ -1544,7 +1557,7 @@ CommandCost CmdDeleteOrder(DoCommandFlags flags, VehicleID veh_id, VehicleOrderI
 {
 	Vehicle *v = Vehicle::GetIfValid(veh_id);
 
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1709,7 +1722,7 @@ CommandCost CmdSkipToOrder(DoCommandFlags flags, VehicleID veh_id, VehicleOrderI
 CommandCost CmdMoveOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID moving_order, VehicleOrderID target_order, uint16_t count)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1852,7 +1865,7 @@ static void AdjustTravelAfterOrderReverse(std::span<Order> orders)
 CommandCost CmdReverseOrderList(DoCommandFlags flags, VehicleID veh, ReverseOrderOperation op)
 {
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1952,7 +1965,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 	if (mof != MOF_LABEL_TEXT && !text.empty()) return CMD_ERROR;
 
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -1967,11 +1980,12 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 	} else {
 		switch (order->GetType()) {
 			case OT_GOTO_STATION:
-				if (mof != MOF_NON_STOP && mof != MOF_STOP_LOCATION && mof != MOF_UNLOAD && mof != MOF_LOAD && mof != MOF_CARGO_TYPE_UNLOAD && mof != MOF_CARGO_TYPE_LOAD && mof != MOF_RV_TRAVEL_DIR) return CMD_ERROR;
+				if (mof != MOF_NON_STOP && mof != MOF_STOP_LOCATION && mof != MOF_UNLOAD && mof != MOF_LOAD && mof != MOF_CARGO_TYPE_UNLOAD && mof != MOF_CARGO_TYPE_LOAD && mof != MOF_RV_TRAVEL_DIR &&
+						mof != MOF_COUPLING_MODE && mof != MOF_COUPLING_LEADER && mof != MOF_COUPLING_FILTER && mof != MOF_COUPLING_FILTER_ID) return CMD_ERROR;
 				break;
 
 			case OT_GOTO_DEPOT:
-				if (mof != MOF_NON_STOP && mof != MOF_DEPOT_ACTION) return CMD_ERROR;
+				if (mof != MOF_NON_STOP && mof != MOF_DEPOT_ACTION && mof != MOF_DEPOT_COUPLED_ALLOWED) return CMD_ERROR;
 				break;
 
 			case OT_GOTO_WAYPOINT:
@@ -2023,6 +2037,47 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_STOP_LOCATION:
 			if (v->type != VehicleType::Train) return CMD_ERROR;
 			if (data >= to_underlying(OrderStopLocation::End)) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_MODE:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data >= to_underlying(OrderCouplingMode::End)) return CMD_ERROR;
+			if (data == to_underlying(OrderCouplingMode::Couple) && !IsCouplingOrderSequenceValid(v->orders, sel_ord, OrderCouplingMode::Couple)) {
+				return CommandCost(STR_ERROR_TRAIN_COUPLING_SECOND_COUPLE_ORDER);
+			}
+			break;
+
+		case MOF_COUPLING_LEADER:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data > 1) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_FILTER:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data >= to_underlying(OrderCouplingFilter::End)) return CMD_ERROR;
+			break;
+
+		case MOF_DEPOT_COUPLED_ALLOWED:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data > 1) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_FILTER_ID:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			switch (order->GetCouplingFilter()) {
+				case OrderCouplingFilter::Group: {
+					const Group *g = Group::GetIfValid(GroupID(data));
+					if (g == nullptr || g->owner != v->owner || g->vehicle_type != VehicleType::Train) return CMD_ERROR;
+					break;
+				}
+				case OrderCouplingFilter::OrderList: {
+					const OrderList *ol = OrderList::GetIfValid(OrderListID(data));
+					if (ol == nullptr || ol->GetFirstSharedVehicle() == nullptr || ol->GetFirstSharedVehicle()->owner != v->owner || ol->GetFirstSharedVehicle()->type != VehicleType::Train) return CMD_ERROR;
+					break;
+				}
+				default:
+					return CMD_ERROR;
+			}
 			break;
 
 		case MOF_CARGO_TYPE_UNLOAD:
@@ -2081,7 +2136,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_COND_VARIABLE: {
 			OrderConditionVariable cond_variable = static_cast<OrderConditionVariable>(data);
 			if (cond_variable >= OrderConditionVariable::End) return CMD_ERROR;
-			if ((cond_variable == OrderConditionVariable::FreePlatforms || cond_variable == OrderConditionVariable::DrivingBackwards) && v->type != VehicleType::Train) return CMD_ERROR;
+			if ((cond_variable == OrderConditionVariable::FreePlatforms || cond_variable == OrderConditionVariable::DrivingBackwards || cond_variable == OrderConditionVariable::CouplingRole) && v->type != VehicleType::Train) return CMD_ERROR;
 			break;
 		}
 
@@ -2098,6 +2153,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 				case OrderConditionVariable::CargoWaiting:
 				case OrderConditionVariable::DispatchSlot:
 				case OrderConditionVariable::DrivingBackwards:
+				case OrderConditionVariable::CouplingRole:
 					if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) return CMD_ERROR;
 					break;
 
@@ -2188,6 +2244,10 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 					if (submode < ODCS_BEGIN || submode >= ODCS_END) return CMD_ERROR;
 					break;
 				}
+
+				case OrderConditionVariable::CouplingRole:
+					if (data >= to_underlying(OrderCouplingRole::End)) return CMD_ERROR;
+					break;
 
 				default:
 					if (data > 2047) return CMD_ERROR;
@@ -2351,6 +2411,30 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 				order->SetStopLocation(static_cast<OrderStopLocation>(data));
 				break;
 
+			case MOF_COUPLING_MODE:
+				order->SetCouplingMode(static_cast<OrderCouplingMode>(data));
+				break;
+
+			case MOF_COUPLING_LEADER:
+				order->SetCouplingArrivingLeads(data != 0);
+				break;
+
+			case MOF_COUPLING_FILTER:
+				order->SetCouplingFilter(static_cast<OrderCouplingFilter>(data));
+				order->SetCouplingFilterID(0);
+				break;
+
+			case MOF_COUPLING_FILTER_ID:
+				order->SetCouplingFilterID(data);
+				break;
+
+			case MOF_DEPOT_COUPLED_ALLOWED: {
+				OrderDepotExtraFlags flags = order->GetDepotExtraFlags();
+				flags.Set(OrderDepotExtraFlag::CoupledAllowed, data != 0);
+				order->SetDepotExtraFlags(flags);
+				break;
+			}
+
 			case MOF_UNLOAD:
 				order->SetUnloadType(static_cast<OrderUnloadType>(data));
 				break;
@@ -2500,6 +2584,7 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 						break;
 					case OrderConditionVariable::RequiresService:
 					case OrderConditionVariable::DrivingBackwards:
+					case OrderConditionVariable::CouplingRole:
 						if (occ != OrderConditionComparator::IsTrue && occ != OrderConditionComparator::IsFalse) order->SetConditionComparator(OrderConditionComparator::IsTrue);
 						order->SetConditionValue(0);
 						break;
@@ -2810,7 +2895,7 @@ CommandCost CmdCloneOrder(DoCommandFlags flags, CloneOptions action, VehicleID v
 			Vehicle *src = Vehicle::GetIfValid(veh_src);
 
 			/* Sanity checks */
-			if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !src->IsPrimaryVehicle() || dst->type != src->type || dst == src) return CMD_ERROR;
+			if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !IsPrimaryOrCoupledPassiveVehicle(src) || dst->type != src->type || dst == src) return CMD_ERROR;
 
 			ret = CheckOwnership(src->owner);
 			if (ret.Failed()) return ret;
@@ -2901,7 +2986,7 @@ CommandCost CmdCloneOrder(DoCommandFlags flags, CloneOptions action, VehicleID v
 			Vehicle *src = Vehicle::GetIfValid(veh_src);
 
 			/* Sanity checks */
-			if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !src->IsPrimaryVehicle() || dst->type != src->type || dst == src) return CMD_ERROR;
+			if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !IsPrimaryOrCoupledPassiveVehicle(src) || dst->type != src->type || dst == src) return CMD_ERROR;
 
 			if (!IsInfrastructureSharingEnabled(src->type)) {
 				CommandCost ret = CheckOwnership(src->owner);
@@ -3022,7 +3107,7 @@ CommandCost CmdInsertOrdersFromVehicle(DoCommandFlags flags, VehicleID veh_dst, 
 	const Vehicle *src = Vehicle::GetIfValid(veh_src);
 
 	/* Sanity checks */
-	if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !src->IsPrimaryVehicle() || dst->type != src->type || dst == src || src->FirstShared() == dst->FirstShared()) return CMD_ERROR;
+	if (src == nullptr || !IsCompanyBuildableVehicleType(src) || !IsPrimaryOrCoupledPassiveVehicle(src) || dst->type != src->type || dst == src || src->FirstShared() == dst->FirstShared()) return CMD_ERROR;
 
 	if (insert_pos > dst->GetNumOrders()) return CMD_ERROR;
 
@@ -3120,7 +3205,7 @@ CommandCost CmdOrderRefit(DoCommandFlags flags, VehicleID veh, VehicleOrderID or
 	if (cargo >= NUM_CARGO && cargo != CARGO_NO_REFIT && cargo != CARGO_AUTO_REFIT) return CMD_ERROR;
 
 	Vehicle *v = Vehicle::GetIfValid(veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
@@ -3224,6 +3309,19 @@ void CheckOrders(const Vehicle *v)
 		/* Do we only have 1 station in our order list? */
 		if (n_st < 2 && message == INVALID_STRING_ID) message = STR_NEWS_VEHICLE_HAS_TOO_FEW_ORDERS;
 
+		if (message == INVALID_STRING_ID && v->type == VehicleType::Train) {
+			if (!IsCouplingOrderSequenceValid(v->orders, UINT_MAX, OrderCouplingMode::None, false, true)) {
+				message = STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE;
+			} else {
+				for (const Order *order : v->Orders()) {
+					if (order->GetCouplingMode() == OrderCouplingMode::Couple && !IsCouplingFilterDefined(order)) {
+						message = STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED;
+						break;
+					}
+				}
+			}
+		}
+
 #ifdef WITH_ASSERT
 		if (v->orders != nullptr) v->orders->DebugCheckSanity();
 #endif
@@ -3264,7 +3362,7 @@ void StopRemoveOrderFromAllVehiclesBatch()
 	_remove_order_from_all_vehicles_batch = false;
 
 	/* Go through all vehicles */
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		if (v->type == VehicleType::Aircraft) continue;
 
 		Order *order = &v->current_order;
@@ -3314,7 +3412,7 @@ void RemoveOrderFromAllVehicles(OrderType type, DestinationID destination, bool 
 	 */
 
 	/* Go through all vehicles */
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
 		Order *order = &v->current_order;
 		if ((v->type == VehicleType::Aircraft && order->IsType(OT_GOTO_DEPOT) && !hangar ? OT_GOTO_STATION : order->GetType()) == type &&
 				(!hangar || v->type == VehicleType::Aircraft) && order->GetDestination() == destination) {
@@ -3727,6 +3825,7 @@ VehicleOrderID ProcessConditionalOrder(const Order *order, const Vehicle *v, Pro
 		case OrderConditionVariable::RequiresService:     skip_order = OrderConditionCompare(occ, v->NeedsServicing(),               value); break;
 		case OrderConditionVariable::RemainingLifetime:   skip_order = OrderConditionCompare(occ, std::max(DateDeltaToYearDelta(v->max_age - v->age + DAYS_IN_LEAP_YEAR - 1).base(), 0), value); break;
 		case OrderConditionVariable::DrivingBackwards:    skip_order = OrderConditionCompare(occ, v->type == VehicleType::Train && (Train::From(v)->tcache.cached_tflags & TCF_NO_DRIVING_CAB), value); break;
+		case OrderConditionVariable::CouplingRole:        skip_order = OrderConditionCompare(occ, v->type == VehicleType::Train && HasTrainCouplingRole(Train::From(v), static_cast<OrderCouplingRole>(value)), value); break;
 		case OrderConditionVariable::Unconditionally:     skip_order = true; break;
 		case OrderConditionVariable::CargoWaiting: {
 			StationID next_station = order->GetConditionStationID();
@@ -4489,7 +4588,7 @@ void BulkOrderCmdData::FormatDebugSummary(format_target &output) const
 CommandCost CmdBulkOrder(DoCommandFlags flags, const BulkOrderCmdData &cmd_data)
 {
 	Vehicle *v = Vehicle::GetIfValid(cmd_data.veh);
-	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v == nullptr || !IsCompanyBuildableVehicleType(v) || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	CommandCost ret = CheckOwnership(v->owner);
 	if (ret.Failed()) return ret;
