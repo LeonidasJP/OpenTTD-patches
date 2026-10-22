@@ -81,6 +81,9 @@ std::vector<Train *> GetCoupledPassiveTrains();
 GroupID GetCoupledPassiveTrainGroup(const Train *passive);
 void SetCoupledPassiveTrainGroup(const Train *passive, GroupID group);
 std::vector<VehicleOrderID> GetMirroredCouplingOrders(const Train *passive, const Train **leader);
+const Vehicle *GetCargoUnitEnd(const Vehicle *unit_front);
+const Vehicle *GetCargoUnitFront(const Vehicle *v);
+bool IsCoupledPassiveTrainStoppingAt(const Vehicle *passive, StationID station);
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
