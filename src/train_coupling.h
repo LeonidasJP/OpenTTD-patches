@@ -119,6 +119,7 @@ bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
 std::optional<int> GetCouplingStopLocation(const Train *v, DiagDirection dir);
 std::optional<int> GetCouplingStopDistance(const Train *v);
 bool IsTrainBeingApproachedForCoupling(const Train *target);
+bool IsTrainCouplingTargetOfOtherTrain(const Train *target, const Train *v, bool committed_only);
 void ClearCouplingApproach(Train *v);
 void OnCouplingTrainEnteredStation(Train *consist);
 void ProcessPendingTrainCouplings();
