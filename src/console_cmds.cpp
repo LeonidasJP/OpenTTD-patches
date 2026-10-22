@@ -76,6 +76,12 @@
 #include "order_backup.h"
 #include "train.h"
 #include "train_coupling.h"
+#include "departures_gui.h"
+#include "timetable.h"
+#include "gui.h"
+#include "vehicle_gui.h"
+#include "widgets/vehicle_widget.h"
+#include "cargopacket.h"
 #include "group.h"
 #include "group_cmd.h"
 #include <map>
@@ -1042,6 +1048,113 @@ static bool ConCheckGroupStats(std::span<std::string_view> argv)
 		if (!(b == n)) differences++;
 	}
 	IConsolePrint(CC_DEFAULT, "check_group_stats: {} differences", differences);
+	return true;
+}
+
+/**
+ * Debug: show where the cargo in both trains of a combination continues after the split, see GetCouplingSplitVia.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCouplingCargo(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: show where the cargo of a coupled combination continues after the split. Usage: 'coupling_cargo <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v != nullptr && v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) v = GetCouplingCombinationHead(v);
+	if (v == nullptr || !IsTrainCoupled(v)) {
+		IConsolePrint(CC_ERROR, "Combination not found.");
+		return true;
+	}
+	const CouplingSplitRoute route = GetCouplingSplitRoute(v);
+	IConsolePrint(CC_DEFAULT, "Combination {}: split at {}, leader then {}, passive then {}, valid {}", v->unitnumber,
+			route.split_station.base(), route.leader_after.base(), route.passive_after.base(), route.IsValid());
+	if (!route.IsValid()) return true;
+	const Train *passive = GetCoupledPassiveHead(v);
+	for (const Vehicle *unit : { static_cast<const Vehicle *>(v), static_cast<const Vehicle *>(passive) }) {
+		const StationID own_after = (unit == passive) ? route.passive_after : route.leader_after;
+		const StationID other_after = (unit == passive) ? route.leader_after : route.passive_after;
+		uint own = 0, other = 0, elsewhere = 0, capacity = 0;
+		for (const Vehicle *u = unit; u != GetCargoUnitEnd(unit); u = u->Next()) {
+			capacity += u->cargo_cap;
+			for (const CargoPacket *cp : *u->cargo.Packets()) {
+				const StationID via = GetCouplingSplitVia(cp, route.split_station, u->cargo_type);
+				if (via == own_after) {
+					own += cp->Count();
+				} else if (via == other_after) {
+					other += cp->Count();
+				} else {
+					elsewhere += cp->Count();
+				}
+			}
+		}
+		IConsolePrint(CC_DEFAULT, "  {} train {}: capacity {}, continues with this train {}, with the other train {}, elsewhere {}",
+				unit == passive ? "passive" : "leading", unit->unitnumber, capacity, own, other, elsewhere);
+	}
+	return true;
+}
+
+/**
+ * Debug: open the windows of a train, also of the passive train of a coupled combination, to exercise their code.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConOpenTrainWindows(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: open the view, orders, timetable, details, vehicle list and departure windows of a train. Usage: 'open_train_windows <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	ShowVehicleViewWindow(v);
+	ShowOrdersWindow(v);
+	ShowTimetableWindow(v);
+	Window *w = FindWindowById(WindowClass::VehicleView, v->index);
+	if (w != nullptr) w->OnClick({}, WID_VV_SHOW_DETAILS, 1);
+	ShowVehicleListWindow(v->owner, VehicleType::Train);
+	ShowVehicleListWindow(v);
+	if (Station::IsValidID(v->last_station_visited)) ShowDeparturesWindow(v->last_station_visited);
+	MarkWholeScreenDirty();
+	IConsolePrint(CC_DEFAULT, "open_train_windows: opened for train {}{}", v->unitnumber, v->flags.Test(VehicleRailFlag::CoupledPassiveHead) ? " (passive)" : "");
+	return true;
+}
+
+/**
+ * Debug: move every other cargo packet between the two trains of a combination, to test VehicleCargoList::ShiftFiltered.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCouplingShiftCargo(std::span<std::string_view> argv)
+{
+	if (argv.size() != 2) {
+		IConsolePrint(CC_HELP, "Debug: move every other cargo packet between the trains of a combination. Usage: 'coupling_shift_cargo <train number>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v != nullptr && v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) v = GetCouplingCombinationHead(v);
+	if (v == nullptr || !IsTrainCoupled(v)) return true;
+	Train *passive = GetCoupledPassiveHead(v);
+	for (bool to_passive : { false, true }) {
+		Vehicle *from_unit = to_passive ? static_cast<Vehicle *>(v) : passive;
+		Vehicle *to_unit = to_passive ? static_cast<Vehicle *>(passive) : v;
+		uint moved = 0;
+		for (Vehicle *from = from_unit; from != GetCargoUnitEnd(from_unit); from = from->Next()) {
+			if (from->cargo.StoredCount() == 0 || from->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != from->cargo.TotalCount()) continue;
+			for (Vehicle *to = to_unit; to != GetCargoUnitEnd(to_unit); to = to->Next()) {
+				if (to->cargo_type != from->cargo_type || to->cargo_cap <= to->cargo.StoredCount()) continue;
+				if (to->cargo.ActionCount(VehicleCargoList::MoveToAction::Keep) != to->cargo.TotalCount()) continue;
+				bool take = false;
+				moved += from->cargo.ShiftFiltered(to->cargo_cap - to->cargo.StoredCount(), &to->cargo, [&](const CargoPacket *) { take = !take; return take; });
+			}
+		}
+		if (moved > 0) {
+			v->MarkDirty();
+			IConsolePrint(CC_DEFAULT, "coupling_shift_cargo: moved {} to the {} train", moved, to_passive ? "passive" : "leading");
+		}
+	}
 	return true;
 }
 
@@ -5176,6 +5289,9 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("orders_json",             ConOrdersJson);
 	IConsole::CmdRegister("set_train_group",         ConSetTrainGroup);
 	IConsole::CmdRegister("check_group_stats",       ConCheckGroupStats);
+	IConsole::CmdRegister("coupling_cargo",          ConCouplingCargo);
+	IConsole::CmdRegister("open_train_windows",      ConOpenTrainWindows);
+	IConsole::CmdRegister("coupling_shift_cargo",    ConCouplingShiftCargo);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
