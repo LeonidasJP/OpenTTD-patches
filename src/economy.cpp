@@ -1507,7 +1507,7 @@ Money CargoPayment::PayTransfer(CargoType cargo, CargoPacket *cp, uint count, Ti
  */
 static OrderLoadType GetLoadType(const Vehicle *v)
 {
-	return v->First()->current_order.GetCargoLoadType(v->cargo_type);
+	return GetCargoUnitFront(v)->current_order.GetCargoLoadType(v->cargo_type);
 }
 
 /**
@@ -1519,7 +1519,7 @@ static OrderLoadType GetLoadType(const Vehicle *v)
  */
 static OrderUnloadType GetUnloadType(const Vehicle *v)
 {
-	return v->First()->current_order.GetCargoUnloadType(v->cargo_type);
+	return GetCargoUnitFront(v)->current_order.GetCargoUnloadType(v->cargo_type);
 }
 
 /**
@@ -1537,6 +1537,30 @@ void PrepareUnload(Vehicle *front_v)
 	/* Start unloading at the first possible moment */
 	front_v->load_unload_ticks = 1;
 
+	PrepareUnloadCargoUnit(front_v);
+}
+
+/**
+ * Let a train which was split off while it was already loading as passive train continue loading as a train of its own.
+ * @param v The train.
+ */
+void ContinueLoadingAfterSplit(Vehicle *v)
+{
+	if (v->cargo_payment == nullptr) {
+		PrepareUnload(v);
+		return;
+	}
+	Station::Get(v->last_station_visited)->loading_vehicles.push_back(v);
+	v->vehicle_flags.Reset(VehicleFlag::LoadingFinished);
+	v->load_unload_ticks = 1;
+}
+
+/**
+ * Prepare the cargo of a cargo unit to be unloaded: the cargo payment, and the staging of the cargo.
+ * @param front_v The front of the cargo unit, see GetCargoUnitEnd.
+ */
+void PrepareUnloadCargoUnit(Vehicle *front_v)
+{
 	assert(front_v->cargo_payment == nullptr);
 	/* One CargoPayment per vehicle and the vehicle limit equals the
 	 * limit in number of CargoPayments. Can't go wrong. */
@@ -1547,7 +1571,8 @@ void PrepareUnload(Vehicle *front_v)
 	CargoStationIDVectorSet next_station = front_v->GetNextStoppingStation();
 	if (front_v->orders == nullptr || (front_v->current_order.GetUnloadType() != OrderUnloadType::NoUnload)) {
 		Station *st = Station::Get(front_v->last_station_visited);
-		for (Vehicle *v = front_v; v != nullptr; v = v->Next()) {
+		const Vehicle *unit_end = GetCargoUnitEnd(front_v);
+		for (Vehicle *v = front_v; v != unit_end; v = v->Next()) {
 			if (GetUnloadType(v) == OrderUnloadType::NoUnload) continue;
 			const GoodsEntry *ge = &st->goods[v->cargo_type];
 			if (v->cargo_cap > 0 && v->cargo.TotalCount() > 0) {
@@ -1899,6 +1924,9 @@ static void ReserveConsist(Station *st, Vehicle *u, CargoArray *consist_capleft,
 	for (Vehicle *v = u->GetMovingFront(); v != nullptr; v = v->GetMovingNext()) {
 		assert(v->cargo_cap >= v->cargo.RemainingCount());
 
+		/* The wagons of the passive train of a coupled combination do not full load. */
+		if (GetCargoUnitFront(v) != u) continue;
+
 		/* Exclude various ways in which the vehicle might not be the head of an equivalent of
 		 * "articulated chain". Also don't do the reservation if the vehicle is going to refit
 		 * to a different cargo and hasn't tried to do so, yet. */
@@ -2050,6 +2078,12 @@ static void LoadUnloadVehicle(Vehicle *front)
 
 	CargoPayment *payment = front->cargo_payment;
 
+	/* The wagons of the passive train of a coupled combination load and unload according to its own orders, see GetCargoUnitEnd. */
+	Vehicle *passive = const_cast<Vehicle *>(GetCargoUnitEnd(front));
+	const bool passive_stops = passive != nullptr && IsCoupledPassiveTrainStoppingAt(passive, last_visited);
+	const CargoStationIDVectorSet passive_next_station = passive_stops ? passive->GetNextStoppingStation() : CargoStationIDVectorSet{};
+	bool passive_anything_unloaded = false;
+
 	uint artic_part = 0; // Articulated part we are currently trying to load. (not counting parts without capacity)
 	bool suppress_artic_load = false;
 	Vehicle *moving_front = front->GetMovingFront();
@@ -2098,11 +2132,19 @@ static void LoadUnloadVehicle(Vehicle *front)
 		if (v->cargo_cap == 0) continue;
 		artic_part++;
 
+		/* The cargo unit of this vehicle: the leading train, or the passive train of a coupled combination. */
+		const bool in_passive = passive != nullptr && GetCargoUnitFront(v) == passive;
+		if (in_passive && !passive_stops) continue; // The passive train does not stop here, its wagons stay closed.
+		const Vehicle *unit = in_passive ? passive : front;
+		CargoPayment *unit_payment = in_passive ? passive->cargo_payment : payment;
+		const CargoStationIDVectorSet &unit_next_station = in_passive ? passive_next_station : next_station;
+		const bool unit_refit = !in_passive && front->current_order.IsRefit(); // No station refits for coupled passive trains.
+
 		/* ge and ged must both be changed together, when the cargo is changed (e.g. after HandleStationRefit) */
 		GoodsEntry *ge = &st->goods[v->cargo_type];
 		GoodsEntryData *ged = &ge->CreateData();
 
-		if (v->vehicle_flags.Test(VehicleFlag::CargoUnloading) && payment == nullptr) {
+		if (v->vehicle_flags.Test(VehicleFlag::CargoUnloading) && unit_payment == nullptr) {
 			/* Once the payment has been made, never attempt to unload again */
 			v->vehicle_flags.Reset(VehicleFlag::CargoUnloading);
 		}
@@ -2150,12 +2192,13 @@ static void LoadUnloadVehicle(Vehicle *front)
 				}
 			}
 
-			assert(payment != nullptr);
-			amount_unloaded = v->cargo.Unload(amount_unloaded, &ged->cargo, v->cargo_type, payment, v->GetCargoTile());
+			assert(unit_payment != nullptr);
+			amount_unloaded = v->cargo.Unload(amount_unloaded, &ged->cargo, v->cargo_type, unit_payment, v->GetCargoTile());
 			remaining = v->cargo.UnloadCount() > 0;
 			if (amount_unloaded > 0) {
 				dirty_vehicle = true;
 				anything_unloaded = true;
+				if (in_passive) passive_anything_unloaded = true;
 				new_load_unload_ticks += amount_unloaded;
 
 				/* Deliver goods to the station */
@@ -2168,7 +2211,7 @@ static void LoadUnloadVehicle(Vehicle *front)
 				/* We have finished unloading (cargo count == 0) */
 				v->vehicle_flags.Reset(VehicleFlag::CargoUnloading);
 			}
-			if (front->current_order.IsRefit() && front->current_order.GetRefitCargo() != v->cargo_type) {
+			if (unit_refit && front->current_order.GetRefitCargo() != v->cargo_type) {
 				suppress_artic_load = true;
 			}
 			continue;
@@ -2176,10 +2219,10 @@ static void LoadUnloadVehicle(Vehicle *front)
 
 		/* Do not pick up goods when we have no-load set or loading is stopped.
 		 * Per-cargo no-load orders can only be checked after attempting to refit. */
-		if (front->current_order.GetLoadType() == OrderLoadType::NoLoad || front->vehicle_flags.Test(VehicleFlag::StopLoading)) continue;
+		if (unit->current_order.GetLoadType() == OrderLoadType::NoLoad || front->vehicle_flags.Test(VehicleFlag::StopLoading)) continue;
 
 		/* This order has a refit, if this is the first vehicle part carrying cargo and the whole vehicle is empty, try refitting. */
-		if (front->current_order.IsRefit() && artic_part == 1) {
+		if (unit_refit && artic_part == 1) {
 			Vehicle *v_start = v->GetFirstEnginePart();
 			if (front->current_order.GetRefitCargo() != v->cargo_type && IterateVehicleParts(v_start, IsUnloadingAction())) {
 				suppress_artic_load = true;
@@ -2236,7 +2279,7 @@ static void LoadUnloadVehicle(Vehicle *front)
 				if (v->cargo.StoredCount() == 0) TriggerVehicleRandomisation(v, VehicleRandomTrigger::NewCargo);
 				if (_settings_game.order.gradual_loading) cap_left = std::min(cap_left, GetLoadAmount(v));
 
-				uint loaded = ged->cargo.Load(cap_left, &v->cargo, next_station.Get(v->cargo_type), v->GetCargoTile());
+				uint loaded = ged->cargo.Load(cap_left, &v->cargo, unit_next_station.Get(v->cargo_type), v->GetCargoTile());
 				if (v->cargo.ActionCount(VehicleCargoList::MoveToAction::Load) > 0) {
 					/* Remember if there are reservations left so that we don't stop
 					 * loading before they're loaded. */
@@ -2299,6 +2342,7 @@ static void LoadUnloadVehicle(Vehicle *front)
 	completely_emptied &= anything_unloaded;
 
 	if (!anything_unloaded && !unload_payment_not_yet_in_station) delete payment;
+	if (passive_stops && !passive_anything_unloaded && !unload_payment_not_yet_in_station) delete passive->cargo_payment;
 
 	front->vehicle_flags.Reset(VehicleFlag::StopLoading);
 

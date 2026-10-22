@@ -7142,6 +7142,8 @@ Money Train::GetRunningCost() const
 {
 	Money cost = 0;
 	const Train *v = this;
+	/* The passive train of a coupled combination pays for its own vehicles. */
+	const Vehicle *unit_end = GetCargoUnitEnd(this);
 
 	do {
 		const Engine *e = v->GetEngine();
@@ -7154,10 +7156,13 @@ Money Train::GetRunningCost() const
 		if (v->IsMultiheaded()) cost_factor /= 2;
 
 		cost += GetPrice(e->VehInfo<RailVehicleInfo>().running_cost_class, cost_factor, e->GetGRF());
-	} while ((v = v->GetNextVehicle()) != nullptr);
+	} while ((v = v->GetNextVehicle()) != nullptr && v != unit_end);
 
-	if (this->cur_speed == 0) {
-		if (this->IsInDepot()) {
+	/* The speed and position of the passive train of a coupled combination are those of the combination. */
+	const Train *front = IsCoupledPassiveTrain(this) ? GetCouplingCombinationHead(this) : this;
+	if (front == nullptr) front = this;
+	if (front->cur_speed == 0) {
+		if (front->IsInDepot()) {
 			/* running costs if in depot */
 			cost = CeilDivT<Money>(cost, _settings_game.difficulty.vehicle_costs_in_depot);
 		} else {
@@ -7253,6 +7258,15 @@ void Train::OnNewDay()
 
 void Train::OnPeriodic()
 {
+	if (IsCoupledPassiveTrain(this) && this->running_ticks != 0) {
+		/* Running costs of the passive train of a coupled combination. */
+		CommandCost cost(ExpensesType::TrainRun, this->GetRunningCost() * this->running_ticks / (DAYS_IN_YEAR  * DAY_TICKS));
+		this->profit_this_year -= cost.GetCost();
+		this->running_ticks = 0;
+		SubtractMoneyFromCompanyFract(this->owner, cost);
+		SetWindowDirty(WindowClass::VehicleDetails, this->index);
+		DirtyVehicleListWindowForVehicle(this);
+	}
 	if (this->IsFrontEngine()) {
 		CheckIfTrainNeedsService(this);
 

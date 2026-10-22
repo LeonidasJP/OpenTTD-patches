@@ -78,6 +78,8 @@
 
 #include <bitset>
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 static StationSpec::TileFlags GetStationTileFlags(StationGfx gfx, const StationSpec *statspec);
@@ -4625,8 +4627,7 @@ void DeleteStaleLinks(Station *from)
 
 						auto res = _delete_stale_links_vehicle_cache.insert(v->index);
 						// Only run LinkRefresher if vehicle was not already in the cache
-						/* The heads of passive trains in coupled combinations are not primary vehicles, skip them. */
-						if (res.second && v->IsPrimaryVehicle()) {
+						if (res.second && IsPrimaryOrCoupledPassiveVehicle(v)) {
 							/* Do not refresh links of vehicles that have been stopped in depot for a long time. */
 							if (!v->IsStoppedInDepot() || (EconTime::CurDate() - v->date_of_last_service) <=
 									LinkGraph::STALE_LINK_DEPOT_TIMEOUT) {

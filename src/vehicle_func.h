@@ -213,4 +213,7 @@ Direction VehicleEnterTileCoordinates(GetNewVehiclePosResult &gp, DiagDirection 
 
 void ShowTrainTooHeavyAdviceMessage(const Vehicle *v);
 
+void LeaveStationCoupledPassive(Vehicle *passive);
+void PrepareCoupledPassiveLoading(Vehicle *passive);
+
 #endif /* VEHICLE_FUNC_H */
