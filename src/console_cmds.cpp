@@ -386,6 +386,24 @@ static Train *FindLocalTrainByUnitNumber(std::string_view arg)
 }
 
 /**
+ * Find a train of the local company by unit number, including the heads of passive trains in coupled combinations.
+ * @param arg The unit number.
+ * @return The train, or nullptr if not found.
+ */
+static Train *FindLocalTrainIdentityByUnitNumber(std::string_view arg)
+{
+	Train *t = FindLocalTrainByUnitNumber(arg);
+	if (t != nullptr) return t;
+	auto unit = ParseType<UnitID>(arg);
+	if (!unit.has_value()) return nullptr;
+	for (const auto &it : _train_couplings) {
+		Train *passive = Train::GetIfValid(it.second.passive_head);
+		if (passive != nullptr && passive->owner == _local_company && passive->unitnumber == *unit) return passive;
+	}
+	return nullptr;
+}
+
+/**
  * Couple two trains which are stopped directly behind each other in a station.
  * @copydoc IConsoleCmdProc
  */
@@ -741,9 +759,15 @@ static bool ConDebugCoupling(std::span<std::string_view> argv)
 		IConsolePrint(CC_HELP, "Debug: show the coupling approach state of a train. Usage: 'debug_coupling <train number>'.");
 		return true;
 	}
-	Train *v = FindLocalTrainByUnitNumber(argv[1]);
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
 	if (v == nullptr) {
 		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	if (v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+		IConsolePrint(CC_DEFAULT, "Train {}: passive in combination {}", v->unitnumber, GetCouplingCombinationHead(v)->unitnumber);
+		IConsolePrint(CC_DEFAULT, "  order {} (real {}) type {} dest {} order time {} lateness {}",
+				v->cur_implicit_order_index + 1, v->cur_real_order_index + 1, v->current_order.GetType(), v->current_order.GetDestination().base(), v->current_order_time, v->lateness_counter);
 		return true;
 	}
 	const Train *mf = v->GetMovingFront();
