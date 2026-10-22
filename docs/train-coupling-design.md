@@ -103,6 +103,7 @@ Het passieve stel houdt zijn eigen order- en dienstregelingsgegevens bij, precie
   - Bij vertrek van de leider wordt de wachttijd verwerkt (`UpdateVehicleTimetable(passief, false)`), en gaat het stel door naar de volgende order.
   - Er wordt niet echt geladen. Het passieve stel komt niet in de laadlijst van het station; laden per stel volgt in §7.
 - **Splitsen:** het afgesplitste stel komt normaal aan via `BeginLoading`. De reistijd sinds het vorige station is dan goed, omdat de tick doorliep.
+- **Koppelstation:** laden beide treinen daar, dan blijft het passieve stel na het koppelen in "laden" staan en vertrekt het met de combinatie (§7.2b). Anders gaat het bij het koppelen meteen door naar zijn volgende stationsorder.
 - **Vertrek:** de leider bepaalt wanneer de combinatie vertrekt. Vertrekt hij eerder of later dan de dienstregeling van het passieve stel zegt, dan telt dat als vroeg of te laat voor het passieve stel.
 - **Scheduled dispatch** werkt zonder extra code, omdat `UpdateVehicleTimetable` het slot opeist bij aankomst op een dispatch-order.
 - **Vertrekborden:** het passieve stel telt mee met zijn eigen orders, dienstregeling en vertraging, alsof het niet gekoppeld is. Ook als het passieve stel het eerste voertuig van zijn gedeelde orderlijst is, wordt die lijst meegenomen.
@@ -360,6 +361,32 @@ Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het voo
 - **Ombouwen in het station** gebeurt niet voor het passieve stel zolang het gekoppeld is.
 - **Kosten:** de leider betaalt de lopende kosten van zijn eigen stel, en het passieve stel die van zijn stel. De `running_ticks` van het passieve stel lopen mee met die van de leider.
 
+### 7.2b Stap B: instappen in het juiste stel (fase 4)
+
+*Gebouwd.* Dit is de uitwerking van §7.2, punt 2 tot 4:
+
+- **Splitsroute** (`GetCouplingSplitRoute`):
+  - Het splitsstation is de eerste `Splitsen`-order van de leider of van het passieve stel, langs de route van de leider.
+  - Per stel wordt het volgende station na het splitsen bepaald, zonder conditionele orders te volgen.
+  - Gaan beide stellen daarna naar hetzelfde station, of is dat onbekend, dan doet stap B niets.
+- **Vaste keuze** (`GetCouplingSplitVia`):
+  - Op het splitsstation wordt de volgende halte van een pakket gekozen met `FlowStat::GetViaDeterministic`, met een hash van het pakketnummer, het herkomststation en het splitsstation in plaats van een willekeurig getal.
+  - Er wordt niets opgeslagen. De savegame verandert dus niet en er is geen desync.
+- **Instappen:**
+  - Laden beide stellen op een station vóór het splitsstation, dan laden de wagons van een stel geen pakketten die met het andere stel verder moeten (`StationCargoList::LoadFiltered`).
+  - Is het andere stel vol voor die lading, dan mag het pakket toch mee.
+- **Overstappen in de trein** (`ExchangeCargoBeforeSplit`):
+  - Bij aankomst op het splitsstation, vóór het lossen, verhuizen pakketten in het verkeerde stel naar wagons van het juiste stel met dezelfde lading en vrije ruimte (`VehicleCargoList::ShiftFiltered`).
+  - Er wordt niets betaald.
+  - Dit gebeurt alleen op het splitsstation, niet op de tussenstops.
+- **Uitstappen op het splitsstation:**
+  - Het klaarzetten van de lading van beide stellen (`Stage`) gebruikt daar dezelfde vaste keuze (`CouplingSplitStagingScope`).
+  - Wie toch in het verkeerde stel zit, stapt over via het station.
+- **Koppelstation:**
+  - Laden beide treinen op hetzelfde station, dan blijft het passieve stel na het koppelen doorladen als deel van de combinatie. Het vertrekt pas met de leider.
+  - Zijn wachttijd in de dienstregeling loopt daardoor tot het vertrek.
+- **Bekende beperking:** een pakket dat bij het laden wordt gesplitst of samengevoegd, krijgt een ander nummer. Zijn vaste keuze kan dan veranderen, en het stapt hooguit op het splitsstation over.
+
 ### 7.3 Opbrengst en kosten
 
 - Bij aflevering worden de opbrengsten per wagon toegerekend aan het stel waar die wagon bij hoort (het record of de leider). Daarvoor komt een toewijzing per stel in `CargoPayment`.
@@ -423,7 +450,7 @@ Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het voo
 1. **Fase 1 – kern:** het record, `CoupleTrains` en `SplitTrain` (hoogstens twee treinen). Een debugcommando om handmatig te koppelen en te splitsen. Savegame-ondersteuning. Het depot vergrendelen.
 2. **Fase 2 – aanrijden:** de gedeeltelijke perronreservering, de snelheden van 40 en 15 km/u, het koppelpunt, de uitzondering voor botsingen, realistisch remmen en het rangeerbeeld.
 3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders. *Gebouwd.* Nog niet gedaan: een melding bij "alle voertuigen naar depot" vanuit een voertuiglijst, en de volgordecontrole bij het invoegen van de orders van een ander voertuig.
-4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel. *Gebouwd:* de dienstregeling van het passieve stel (§3.4a), vertrekborden, het eigen venster en de groep van het passieve stel, en de gespiegelde orders (§9). Nog te doen: `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel (§7).
+4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel. *Gebouwd:* de dienstregeling van het passieve stel (§3.4a), vertrekborden, het eigen venster en de groep van het passieve stel, en de gespiegelde orders (§9). Daarna gebouwd: lading per stel, stap A en B (§7.2a, §7.2b).
 5. **Fase 5 – seinbeeld:** knipperende seinen, de recolour-sprites, de groen-geel-variant en de NewGRF-bit 25 met documentatie in `newgrf-additions.html`.
 
 **Testscenario's:**
