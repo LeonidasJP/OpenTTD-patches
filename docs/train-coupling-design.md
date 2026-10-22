@@ -234,20 +234,21 @@ Geïmplementeerd in fase 2. Zolang er nog geen ordervlaggen zijn (fase 3), wordt
 
 Dit volgt de wens van de opdrachtgever. Per sein is één extra bit nodig: **"aankoppelen toegestaan"**.
 
-- **Opslag:** `m3` bits 0–3 van rail-tegels lijken vrij, één bit per seinpositie, net als de "sein aanwezig"-bits 4–7. Dit nog verifiëren met `docs/landscape_grid.html`.
-- **Bit zetten:** bij het maken van de koppelreservering (§6.1).
-- **Bit wissen:** zodra het sein weer rood wordt. Dat gebeurt op dezelfde plekken als waar het seinbeeld nu op 0 wordt gezet, zoals `pbs.cpp:95`.
+- **Opslag:** `m3` bits 0–3 van rail-tegels met seinen. Die zijn vrij (`docs/landscape_grid.html`). Er is één bit per seinpositie, met dezelfde nummering als de "sein aanwezig"-bits 4–7 en de seinkleuren in `m4`. Savegames van vóór `XSLFI_TRAIN_COUPLING` versie 3 krijgen deze bits bij het laden op 0.
+- **Bit zetten** (`MarkCouplingApproachSignal`): na een geslaagde padreservering waarbij de trein het perron van zijn koppeldoel reserveerde. De reservering van de trein wordt gevolgd tot dat perron, en het laatste PBS-sein in rijrichting krijgt de bit.
+- **Bit wissen:** in `SetSignalStateByTrackdir`, zodra het sein rood wordt. Daar komen alle plekken langs die een PBS-sein op rood zetten. Wordt een sein verwijderd (`SetPresentSignals`), dan verdwijnt zijn bit ook.
 - Het seinbeeld (de waarde van het aspect) zelf wordt **niet** hergebruikt. Remberekening en het doorgeven van seinbeelden lezen die waarde, en die mogen niet veranderen.
+- **Niet ondersteund:** seinen op tunnel- en brugkoppen, en bloksein-signalering zonder PBS. Die tonen het gewone beeld.
 
 | Situatie | Wat het sein toont | Hoe |
 |---|---|---|
-| Seinstijl met `COMBINED_NORMAL_SHUNT` (realistisch remmen) | **Rangeerbeeld** | **Geïmplementeerd in fase 2:** in `DetermineCombineNormalShuntModeWithLookahead` krijgt het laatste sein vóór het koppelperron het rangeerbeeld. Een routeringsbeperking die expliciet "normaal" afdwingt, gaat voor. Nog niet getest met een NewGRF die een rangeerbeeld heeft. |
-| NewGRF-sein dat de nieuwe functie ondersteunt | **Groen knipperend**, of een eigen beeld van de GRF | Nieuwe bit 25 in variabele 0x18 (`param2`): "aankoppelen toegestaan". De GRF schakelt dit in via een nieuwe feature- of control-vlag, net als bit 24 voor beperkte seinen. De GRF laat het sein knipperen met de bestaande animatieteller (globale variabele 0x0A). |
-| Ingebouwde seinen | **Groen knipperend** | `DrawSingleSignal` wisselt op de tick-teller tussen het normale groene sprite en een groen sprite met een "lamp uit"-recolour. Die recolour komt als extra sprite in `tracerestrict.grf` of een kleine nieuwe basis-GRF. |
-| NewGRF-sein zonder ondersteuning voor bit 25 | **Geel ("Prepare to stop")** | Alleen bij het tekenen wordt aspect 2 aan de GRF doorgegeven, in plaats van de opgeslagen waarde. Het opgeslagen seinbeeld en de remberekening veranderen niet. Heeft de GRF geen extra aspecten (alleen rood en groen), dan wordt groen getoond. |
-| Ingebouwd sein waarbij de speler knipperen heeft uitgezet | **Groen en geel tegelijk** | Groen sprite met een gele recolour-overlay op de lamp. |
+| Seinstijl met `COMBINED_NORMAL_SHUNT` (realistisch remmen) | **Rangeerbeeld** | **Geïmplementeerd in fase 2:** in `DetermineCombineNormalShuntModeWithLookahead` krijgt het laatste sein vóór het koppelperron het rangeerbeeld. Een routeringsbeperking die expliciet "normaal" afdwingt, gaat voor. |
+| NewGRF-sein dat de nieuwe functie ondersteunt | **Wat de GRF tekent**, bijvoorbeeld groen knipperend | Bit 25 in variabele 0x18 (`param2`): "aankoppelen toegestaan". De GRF schakelt dit in met de eigenschap `signals_enable_coupling_aspect` of `railtype_enable_coupling_aspect` (feature `action0_signals_coupling_aspect` of `action0_railtype_coupling_aspect`). De GRF kan knipperen met de animatieteller (globale variabele 0x0A). |
+| NewGRF-sein zonder ondersteuning | **"Let op"** | Alleen bij het tekenen wordt intern aspect 1 gebruikt ("volgende sein rood") in plaats van het opgeslagen aspect. Een GRF met extra seinbeelden krijgt daardoor aspect 2 (geel); zonder extra seinbeelden blijft het 1 (groen). Het opgeslagen seinbeeld en de remberekening veranderen niet. |
+| Ingebouwde seinen | **Groen knipperend** | Besluit opdrachtgever: in de "uit"-fase wordt het groene sein met `PALETTE_TO_GREY` getekend (hele sein grijs). Er zijn dus geen nieuwe sprites nodig. |
+| Ingebouwd sein, knipperen uitgezet | **Gewoon groen** | Besluit opdrachtgever. Clientinstelling `gui.flash_coupling_signals` (standaard aan), onder andere voor lichtgevoeligheid. |
 
-**Laten knipperen:** er komt een globale set "knipperende seinen" (tegel + trackdir). Elke ~16 ticks wordt `MarkSingleSignalDirty` aangeroepen voor elk sein in de set, naast `AnimateAnimatedTiles`. Dit raakt alleen het tekenen, dus het veroorzaakt geen desync. Er komt een clientinstelling "knipperende seinen" (aan of uit), onder andere voor lichtgevoeligheid. Staat die uit, dan geldt de groen-geel-variant.
+**Laten knipperen:** een cache van tegels met een koppelbit (`_coupling_signal_tiles`). Die wordt bijgewerkt bij het zetten van de bit, en na het laden opnieuw opgebouwd uit de kaart. Elke 16 ticks wordt elke tegel in de cache opnieuw getekend. De fase is `(_scaled_tick_counter / 16) % 2` (elke speltick, ook bij een langere daglengte). Tegels waarvan de bit inmiddels gewist is, worden nog één keer getekend en verdwijnen dan uit de cache. Dit raakt alleen het tekenen, dus het veroorzaakt geen desync.
 
 ### 6.3 Snelheid
 
