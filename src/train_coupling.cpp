@@ -881,6 +881,24 @@ bool IsTrainBeingApproachedForCoupling(const Train *target)
 }
 
 /**
+ * Is a train the coupling target of another train than a given one?
+ * Each waiting train can only be coupled to by one train, a second train would drive into the combination.
+ * @param target The waiting train.
+ * @param v The train which wants to approach the target.
+ * @param committed_only Only count trains which already reserved their path into the platform of the target.
+ * @return True if another train already targets the waiting train.
+ */
+bool IsTrainCouplingTargetOfOtherTrain(const Train *target, const Train *v, bool committed_only)
+{
+	for (const Train *t : Train::IterateFrontOnly()) {
+		if (t == v || t->coupling_target != target->index) continue;
+		if (committed_only && !IsValidDiagDirection(t->coupling_dir)) continue;
+		return true;
+	}
+	return false;
+}
+
+/**
  * Stop approaching a train to couple.
  * @param v The approaching train.
  */
@@ -954,8 +972,13 @@ void UpdateCouplingApproachFromOrders(Train *v)
 	const bool couple = order != nullptr && order->GetCouplingMode() == OrderCouplingMode::Couple && !IsTrainCoupled(v);
 
 	if (v->flags.Test(VehicleRailFlag::CouplingFromOrders)) {
-		/* Stop approaching when the order changed, or the partner is no longer available. */
-		if (!couple || GetCouplingApproachTarget(v) == nullptr) ClearCouplingApproach(v);
+		/* Stop approaching when the order changed, or the partner is no longer available.
+		 * Also give up the partner when another train already reserved its path to it, and this train did not. */
+		const Train *target = GetCouplingApproachTarget(v);
+		if (!couple || target == nullptr ||
+				(!IsValidDiagDirection(v->coupling_dir) && IsTrainCouplingTargetOfOtherTrain(target, v, true))) {
+			ClearCouplingApproach(v);
+		}
 	}
 	if (!couple || v->coupling_target != VehicleID::Invalid()) return;
 
@@ -971,7 +994,8 @@ void UpdateCouplingApproachFromOrders(Train *v)
 		const Order *partner_order = GetCurrentCouplingOrder(partner);
 		if (partner_order == nullptr || partner_order->GetCouplingMode() != OrderCouplingMode::Couple) continue;
 		if (!DoesTrainMatchCouplingFilter(order, partner) || !DoesTrainMatchCouplingFilter(partner_order, v)) continue;
-		if (IsTrainBeingApproachedForCoupling(partner)) continue;
+		/* Only one train may drive to a waiting train to couple. */
+		if (IsTrainCouplingTargetOfOtherTrain(partner, v, false)) continue;
 
 		v->coupling_target = partner->index;
 		v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, order->IsCouplingArrivingLeads());
