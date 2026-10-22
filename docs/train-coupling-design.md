@@ -277,6 +277,11 @@ Er zijn twee nieuwe instellingen, te vinden onder "Beperkingen":
 - `CheckTrainCollision` heeft een uitzondering voor het paar oprijdende trein en doel, in beide richtingen (`IsCouplingApproachCollision`).
 - Een trein waar een andere trein op afrijdt om te koppelen, blijft laden en vertrekt niet (`IsTrainBeingApproachedForCoupling` in `HandleLoading`).
 - Voor alle andere treinen gelden de normale botsregels.
+- **Eén oprijdende trein per wachtende trein** (`IsTrainCouplingTargetOfOtherTrain`):
+  - Een trein kiest geen partner die al het doel is van een andere trein.
+  - Het perron wordt niet gereserveerd als een andere trein al een pad naar hetzelfde doel heeft gereserveerd.
+  - Een trein zonder gereserveerd pad laat zijn doel los zodra een andere trein dat pad wel heeft.
+  - *Aanleiding:* in de save Coupler Inc. reden twee treinen uit een depot naast Breda North allebei naar dezelfde wachtende trein. De eerste koppelde, waarna de tweede zijn doel verloor terwijl hij al in het perron reed, en botste.
 
 ### 6.6 Afbreken
 
