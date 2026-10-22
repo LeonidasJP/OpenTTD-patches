@@ -37,6 +37,8 @@
 #include "tilehighlight_func.h"
 #include "viewport_func.h"
 #include "core/backup_type.hpp"
+#include "train.h"
+#include "train_coupling.h"
 #include "3rdparty/robin_hood/robin_hood.h"
 
 #include "table/sprites.h"
@@ -213,8 +215,8 @@ protected:
 
 					if (this->source_mode != DSM_LIVE) this->vehicles.push_back(veh);
 					for (const Vehicle *v = veh; v != nullptr; v = v->NextShared()) {
-						/* The heads of passive trains in coupled combinations are not primary vehicles. */
-						if (!v->IsPrimaryVehicle()) continue;
+						/* The heads of passive trains in coupled combinations are not primary vehicles, but keep their own timetable. */
+						if (!IsPrimaryOrCoupledPassiveVehicle(v)) continue;
 						if (this->source_mode == DSM_LIVE) this->vehicles.push_back(v);
 
 						if (show_vehicle_name) {
@@ -258,6 +260,13 @@ protected:
 
 			for (const Vehicle *veh : Vehicle::IterateTypeMaskFrontOnly(vt_mask)) {
 				if (veh->IsPrimaryVehicle() && veh == veh->FirstShared()) process_vehicle(veh);
+			}
+			if (HasBit(vt_mask, to_underlying(VehicleType::Train))) {
+				/* The heads of passive trains in coupled combinations are not front vehicles, but can be the first vehicle of their order list. */
+				for (const auto &it : _train_couplings) {
+					const Vehicle *passive = Vehicle::GetIfValid(it.second.passive_head);
+					if (passive != nullptr && passive == passive->FirstShared()) process_vehicle(passive);
+				}
 			}
 		}
 
@@ -603,7 +612,13 @@ public:
 
 				if (id_v >= this->departures.size()) return; // click out of list bound
 
-				ShowVehicleViewWindow(this->departures[id_v]->vehicle);
+				const Vehicle *v = this->departures[id_v]->vehicle;
+				/* The passive train of a coupled combination has no window of its own, show the combination. */
+				if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
+					v = GetCouplingCombinationHead(Train::From(v));
+					if (v == nullptr) return;
+				}
+				ShowVehicleViewWindow(v);
 				break;
 			}
 

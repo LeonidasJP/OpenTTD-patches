@@ -20,9 +20,12 @@
 #include "newgrf_debug.h"
 #include "order_backup.h"
 #include "order_base.h"
+#include "order_func.h"
 #include "station_base.h"
 #include "station_map.h"
 #include "texteff.hpp"
+#include "timetable.h"
+#include "economy_func.h"
 #include "tracerestrict.h"
 #include "vehicle_func.h"
 #include "vehicle_gui.h"
@@ -134,10 +137,10 @@ static void SwapTrainIdentities(Train *a, Train *b)
 		a->vehstatus.Set(VehState::Stopped, b->vehstatus.Test(VehState::Stopped));
 		b->vehstatus.Set(VehState::Stopped, a_stopped);
 	}
-	{
-		const bool a_exempt = a->flags.Test(VehicleRailFlag::SpeedAdaptationExempt);
-		a->flags.Set(VehicleRailFlag::SpeedAdaptationExempt, b->flags.Test(VehicleRailFlag::SpeedAdaptationExempt));
-		b->flags.Set(VehicleRailFlag::SpeedAdaptationExempt, a_exempt);
+	for (VehicleRailFlag flag : { VehicleRailFlag::SpeedAdaptationExempt, VehicleRailFlag::SplitOffLast, VehicleRailFlag::CouplingFailedLast }) {
+		const bool a_set = a->flags.Test(flag);
+		a->flags.Set(flag, b->flags.Test(flag));
+		b->flags.Set(flag, a_set);
 	}
 
 	/* Loading state */
@@ -328,6 +331,43 @@ static void LeaveStationForCoupling(Train *t)
 }
 
 /**
+ * Let the passive train of a combination process its orders up to its next station order, as ProcessOrders does for a front vehicle.
+ * Conditional, slot and counter orders are executed. Orders with another destination, such as depot and waypoint orders, are skipped while coupled.
+ * @param passive The head of the passive train.
+ */
+static void AdvanceCoupledPassiveOrders(Train *passive)
+{
+	passive->current_order.Free();
+	const int max_steps = std::min<int>(64, passive->GetNumOrders());
+	for (int step = 0; step <= max_steps; step++) {
+		if (passive->GetNumManualOrders() == 0) return;
+		passive->UpdateRealOrderIndex();
+		const Order *order = passive->GetOrder(passive->cur_real_order_index);
+		switch (order->GetType()) {
+			case OT_GOTO_STATION:
+				passive->current_order = *order;
+				InvalidateVehicleOrder(passive, 0);
+				return;
+
+			case OT_CONDITIONAL:
+			case OT_SLOT:
+			case OT_SLOT_GROUP:
+			case OT_COUNTER:
+				/* Only process this order, the loop handles the order which follows. */
+				passive->current_order = *order;
+				UpdateOrderDest(passive, order, max_steps);
+				passive->current_order.Free();
+				break;
+
+			default:
+				UpdateVehicleTimetable(passive, true);
+				passive->IncrementRealOrderIndex();
+				break;
+		}
+	}
+}
+
+/**
  * Couple two trains into one combination.
  * @param waiting The train which is waiting in the platform.
  * @param arriving The train which arrived to couple.
@@ -387,6 +427,13 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 	tc.passive_head = second->index;
 	_train_couplings[first->index] = tc;
 
+	/* The passive train left its couple order before it was coupled, both trains coupled successfully. */
+	first->flags.Reset(VehicleRailFlag::CouplingFailedLast);
+	second->flags.Reset(VehicleRailFlag::CouplingFailedLast);
+
+	/* The timetable of the passive train continues, it heads for its next station order. */
+	AdvanceCoupledPassiveOrders(second);
+
 	UpdateTrainGroupID(first);
 	first->ConsistChanged(CCF_TRACK);
 	CheckBreakdownFlags(first);
@@ -425,6 +472,12 @@ static void PrepareDepartureAfterSplit(Train *t)
 		/* When this station is the current order of the train, load here according to that order. */
 		const Order *order = t->GetOrder(t->cur_real_order_index);
 		if (order != nullptr && order->IsType(OT_GOTO_STATION) && order->GetDestination() == station) {
+			if (t->current_order.IsType(OT_LOADING) && t->current_order.GetDestination() == station) {
+				/* The passive train already stopped here while coupled, its arrival is already in its timetable. */
+				PrepareUnload(t);
+				SetWindowDirty(WindowClass::StationView, station);
+				return;
+			}
 			t->current_order = *order;
 			t->BeginLoading();
 			return;
@@ -929,25 +982,67 @@ void OnCombinationEnteredStation(Train *head, StationID station)
 	const Order *leader_order = GetCurrentCouplingOrder(head);
 	if (leader_order != nullptr && leader_order->GetCouplingMode() == OrderCouplingMode::Split) split = true;
 
-	/* While coupled, the passive train skips its orders which are not station orders, such as depot orders. */
-	for (uint i = 0; i < passive->GetNumOrders(); i++) {
-		const Order *o = passive->GetOrder(passive->cur_real_order_index);
-		if (o == nullptr || o->IsType(OT_GOTO_STATION)) break;
-		passive->IncrementRealOrderIndex();
-	}
+	/* The passive train heads for its next station order, combinations coupled by older versions might not have one yet. */
+	if (!passive->current_order.IsType(OT_GOTO_STATION)) AdvanceCoupledPassiveOrders(passive);
 
 	const Order *passive_order = passive->GetOrder(passive->cur_real_order_index);
 	if (passive_order != nullptr && passive_order->IsType(OT_GOTO_STATION) && passive_order->GetDestination() == station) {
 		if (passive_order->GetCouplingMode() == OrderCouplingMode::Split) {
 			split = true;
 		} else if (!split) {
-			/* The passive train visits this station as part of the combination. */
+			/* The passive train stops at this station as part of the combination, as BeginLoading does for the timetable. */
 			passive->last_station_visited = station;
-			passive->IncrementImplicitOrderIndex();
+			passive->current_order = *passive_order;
+			passive->DeleteUnreachedImplicitOrders();
+			passive->current_order.MakeLoading(true);
+			UpdateVehicleTimetable(passive, true);
+			passive->current_order.SetNonStopType(ONSF_NO_STOP_AT_ANY_STATION);
+			SetWindowDirty(WindowClass::VehicleView, passive->index);
 		}
 	}
 
 	if (split) _pending_train_splits.push_back(head->index);
+}
+
+/**
+ * A combination leaves a station: when the passive train stopped there, it leaves as well and heads for its next station order.
+ * @param head The head of the combination.
+ */
+void OnCombinationLeavingStation(Train *head)
+{
+	Train *passive = GetCoupledPassiveHead(head);
+	if (passive == nullptr || !passive->current_order.IsType(OT_LOADING)) return;
+
+	UpdateVehicleTimetable(passive, false);
+
+	/* Advance to the next order, as is done when leaving normally. */
+	const Order *order = passive->GetOrder(passive->cur_implicit_order_index);
+	if (order != nullptr && (order->IsType(OT_IMPLICIT) || order->IsType(OT_GOTO_STATION)) && order->GetDestination() == passive->last_station_visited) {
+		passive->IncrementImplicitOrderIndex();
+	}
+	AdvanceCoupledPassiveOrders(passive);
+	SetWindowDirty(WindowClass::VehicleView, passive->index);
+}
+
+/**
+ * The timetable of the passive train of a combination keeps running.
+ * @param head The head of the combination.
+ */
+void TickCoupledPassiveTrain(Train *head)
+{
+	Train *passive = GetCoupledPassiveHead(head);
+	if (passive != nullptr) passive->current_order_time++;
+}
+
+/**
+ * Does a vehicle have its own orders and timetable which are in use?
+ * This holds for primary vehicles, and for the heads of the passive trains in coupled combinations.
+ * @param v The vehicle.
+ * @return True if the vehicle is a primary vehicle or the head of a coupled passive train.
+ */
+bool IsPrimaryOrCoupledPassiveVehicle(const Vehicle *v)
+{
+	return v->IsPrimaryVehicle() || (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead));
 }
 
 /** Split the combinations which reached a split order during this tick. */

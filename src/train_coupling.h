@@ -72,6 +72,9 @@ bool IsCouplingFilterDefined(const Order *order);
 const Order *GetCurrentCouplingOrder(const Train *v);
 void UpdateCouplingApproachFromOrders(Train *v);
 void OnCombinationEnteredStation(Train *head, StationID station);
+void OnCombinationLeavingStation(Train *head);
+void TickCoupledPassiveTrain(Train *head);
+bool IsPrimaryOrCoupledPassiveVehicle(const Vehicle *v);
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
