@@ -7181,6 +7181,7 @@ bool Train::Tick()
 		if (!(this->vehstatus.Test(VehState::Stopped) || this->IsWaitingInDepot()) || this->cur_speed > 0) this->running_ticks++;
 
 		this->current_order_time++;
+		if (this->flags.Test(VehicleRailFlag::CoupledCombination)) TickCoupledPassiveTrain(this);
 
 		if (!TrainLocoHandler(this, false)) return false;
 
