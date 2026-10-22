@@ -16,6 +16,7 @@
 #include "direction_type.h"
 #include "tile_type.h"
 #include "station_type.h"
+#include "order_type.h"
 #include <optional>
 #include <vector>
 #include "3rdparty/cpp-btree/btree_map.h"
@@ -79,6 +80,7 @@ bool IsCoupledPassiveTrain(const Vehicle *v);
 std::vector<Train *> GetCoupledPassiveTrains();
 GroupID GetCoupledPassiveTrainGroup(const Train *passive);
 void SetCoupledPassiveTrainGroup(const Train *passive, GroupID group);
+std::vector<VehicleOrderID> GetMirroredCouplingOrders(const Train *passive, const Train **leader);
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);

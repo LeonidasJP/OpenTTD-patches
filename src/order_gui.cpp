@@ -891,13 +891,15 @@ static StringID GetDepotOrderGoToString(const Order &order)
  * @param middle X position between order index and order text
  * @param right Right border for text drawing
  */
-void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int y, bool selected, bool timetable, int left, int middle, int right)
+void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int y, bool selected, bool timetable, int left, int middle, int right, bool mirrored)
 {
 	bool rtl = _current_text_dir == TD_RTL;
 
 	SpriteID sprite = rtl ? SPR_ARROW_LEFT : SPR_ARROW_RIGHT;
 	Dimension sprite_size = GetSpriteSize(sprite);
-	if (v->cur_real_order_index == order_index) {
+	if (mirrored) {
+		/* An order of the leading train of a coupled combination, shown in the orders of the passive train: no index or arrows. */
+	} else if (v->cur_real_order_index == order_index) {
 		/* Draw two arrows before the next real order. */
 		DrawSprite(sprite, PAL_NONE, rtl ? right -     sprite_size.width : left,                     y + ((int)GetCharacterHeight(FontSize::Normal) - (int)sprite_size.height) / 2);
 		DrawSprite(sprite, PAL_NONE, rtl ? right - 2 * sprite_size.width : left + sprite_size.width, y + ((int)GetCharacterHeight(FontSize::Normal) - (int)sprite_size.height) / 2);
@@ -907,7 +909,9 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 	}
 
 	ExtendedTextColour colour{TextColour::Black};
-	if (order->IsType(OT_IMPLICIT)) {
+	if (mirrored) {
+		colour = ExtendedTextColour{TextColour::Grey, ExtendedTextColourFlag::NoShade};
+	} else if (order->IsType(OT_IMPLICIT)) {
 		colour = ExtendedTextColour{selected ? TextColour::Silver : TextColour::Grey, ExtendedTextColourFlag::NoShade};
 	} else {
 		if (selected) {
@@ -918,7 +922,7 @@ void DrawOrderString(const Vehicle *v, const Order *order, int order_index, int 
 		}
 	}
 
-	DrawString(left, rtl ? right - 2 * sprite_size.width - 3 : middle, y, GetString(STR_ORDER_INDEX, order_index + 1), colour, AlignmentH::ForceRight);
+	if (!mirrored) DrawString(left, rtl ? right - 2 * sprite_size.width - 3 : middle, y, GetString(STR_ORDER_INDEX, order_index + 1), colour, AlignmentH::ForceRight);
 
 	bool timetable_wait_time_valid = false;
 	format_buffer line;
@@ -1704,6 +1708,9 @@ private:
 
 	int selected_order = -1;
 	VehicleOrderID order_over = INVALID_VEH_ORDER_ID; ///< Order over which another order is dragged, \c INVALID_VEH_ORDER_ID if none.
+	const Train *mirror_leader = nullptr;             ///< Head of the combination when this is a coupled passive train, see #mirror_orders.
+	std::vector<VehicleOrderID> mirror_orders;        ///< Orders of the leading train shown (greyed) before the current order of a coupled passive train.
+	VehicleOrderID mirror_pos = INVALID_VEH_ORDER_ID; ///< Order before which #mirror_orders are shown, \c INVALID_VEH_ORDER_ID if none.
 	OrderPlaceObjectState goto_type = OPOS_NONE;
 	Scrollbar *vscroll = nullptr;
 	bool can_do_refit = false;     ///< Vehicle chain can be refitted in depot.
@@ -1740,8 +1747,50 @@ private:
 		int32_t sel = this->vscroll->GetScrolledRowFromWidget(y, this, WID_O_ORDER_LIST, WidgetDimensions::scaled.framerect.top);
 		if (sel == INT32_MAX) return INVALID_VEH_ORDER_ID;
 		/* One past the orders is the 'End of Orders' line. */
-		assert(IsInsideBS(sel, 0, vehicle->GetNumOrders() + 1));
-		return sel;
+		if (!IsInsideBS(sel, 0, this->GetRowCount())) return INVALID_VEH_ORDER_ID;
+		/* The mirrored orders of the leading train can not be selected. */
+		if (this->GetMirroredOrderOfRow(sel) != nullptr) return INVALID_VEH_ORDER_ID;
+		return this->RowToOrder(sel);
+	}
+
+	/** Update the orders of the leading train which are shown in the orders of a coupled passive train. */
+	void UpdateMirroredOrders()
+	{
+		this->mirror_orders.clear();
+		this->mirror_pos = INVALID_VEH_ORDER_ID;
+		this->mirror_leader = nullptr;
+		if (this->vehicle->type != VehicleType::Train) return;
+		this->mirror_orders = GetMirroredCouplingOrders(Train::From(this->vehicle), &this->mirror_leader);
+		if (!this->mirror_orders.empty()) this->mirror_pos = this->vehicle->cur_real_order_index;
+	}
+
+	/** Number of rows in the order list, including the mirrored orders and the 'End of Orders' line. */
+	int GetRowCount() const
+	{
+		return this->vehicle->GetNumOrders() + 1 + (int)this->mirror_orders.size();
+	}
+
+	/** Row of an order (or the 'End of Orders' line) in the order list. */
+	int OrderToRow(VehicleOrderID order) const
+	{
+		if (this->mirror_pos != INVALID_VEH_ORDER_ID && order != INVALID_VEH_ORDER_ID && order >= this->mirror_pos) return order + (int)this->mirror_orders.size();
+		return order;
+	}
+
+	/** Order (or the 'End of Orders' line) in a row of the order list, rows of mirrored orders give the order which follows them. */
+	VehicleOrderID RowToOrder(int row) const
+	{
+		if (this->mirror_pos == INVALID_VEH_ORDER_ID || row < this->mirror_pos) return row;
+		return std::max<int>(this->mirror_pos, row - (int)this->mirror_orders.size());
+	}
+
+	/** Mirrored order of the leading train in a row of the order list, nullptr if the row shows an order of this vehicle. */
+	const Order *GetMirroredOrderOfRow(int row, VehicleOrderID *leader_index = nullptr) const
+	{
+		if (this->mirror_pos == INVALID_VEH_ORDER_ID || row < this->mirror_pos || row >= this->mirror_pos + (int)this->mirror_orders.size()) return nullptr;
+		const VehicleOrderID index = this->mirror_orders[row - this->mirror_pos];
+		if (leader_index != nullptr) *leader_index = index;
+		return this->mirror_leader->GetOrder(index);
 	}
 
 	/**
@@ -2281,7 +2330,8 @@ public:
 				break;
 		}
 
-		this->vscroll->SetCount(this->vehicle->GetNumOrders() + 1);
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
 		if (gui_scope) {
 			this->UpdateButtonState();
 			InvalidateWindowClassesData(WindowClass::VehicleCargoTypeLoadOrders, 0);
@@ -2318,8 +2368,8 @@ public:
 		this->selected_order = to;
 
 		/* Scroll to the new order. */
-		if (from == INVALID_VEH_ORDER_ID && to != INVALID_VEH_ORDER_ID && !this->vscroll->IsVisible(to)) {
-			this->vscroll->ScrollTowards(to);
+		if (from == INVALID_VEH_ORDER_ID && to != INVALID_VEH_ORDER_ID && !this->vscroll->IsVisible(this->OrderToRow(to))) {
+			this->vscroll->ScrollTowards(this->OrderToRow(to));
 		}
 	}
 
@@ -2673,6 +2723,10 @@ public:
 
 	void OnPaint() override
 	{
+		/* The mirrored orders of a coupled passive train follow the progress of the combination. */
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
+
 		if (this->vehicle->owner != _local_company) {
 			this->selected_order = -1; // Disable selection any selected row at a competitor order window.
 		} else {
@@ -2713,49 +2767,48 @@ public:
 		int y = ir.top;
 		int line_height = this->GetWidget<NWidgetBase>(WID_O_ORDER_LIST)->resize_y;
 
-		int i = this->vscroll->GetPosition();
-		const Order *order = this->vehicle->GetOrder(i);
+		const int num_rows = this->GetRowCount();
+		const int selected_row = this->selected_order >= 0 ? this->OrderToRow(this->selected_order) : -1;
+
 		/* First draw the highlighting underground if it exists. */
 		if (this->order_over != INVALID_VEH_ORDER_ID) {
-			while (order != nullptr) {
-				/* Don't draw anything if it extends past the end of the window. */
-				if (!this->vscroll->IsVisible(i)) break;
-
-				if (i != this->selected_order && i == this->order_over) {
+			const int over_row = this->OrderToRow(this->order_over);
+			for (int row = this->vscroll->GetPosition(); row < num_rows - 1 && this->vscroll->IsVisible(row); row++) {
+				if (row != selected_row && row == over_row) {
 					/* Highlight dragged order destination. */
-					int top = (this->order_over < this->selected_order ? y : y + line_height) - WidgetDimensions::scaled.framerect.top;
+					int top = (over_row < selected_row ? y : y + line_height) - WidgetDimensions::scaled.framerect.top;
 					int bottom = std::min(top + 2, ir.bottom);
 					top = std::max(top - 3, ir.top);
 					GfxFillRect(ir.left, top, ir.right, bottom, GetColourGradient(Colours::Grey, Shade::Lightest));
 					break;
 				}
 				y += line_height;
-
-				i++;
-				order = this->vehicle->orders->GetNextNoWrap(order);
 			}
 
 			/* Reset counters for drawing the orders. */
 			y = ir.top;
-			i = this->vscroll->GetPosition();
-			order = this->vehicle->GetOrder(i);
 		}
 
 		/* Draw the orders. */
-		while (order != nullptr) {
+		int row = this->vscroll->GetPosition();
+		for (; row < num_rows - 1; row++) {
 			/* Don't draw anything if it extends past the end of the window. */
-			if (!this->vscroll->IsVisible(i)) break;
+			if (!this->vscroll->IsVisible(row)) break;
 
-			DrawOrderString(this->vehicle, order, i, y, i == this->selected_order, false, ir.left, middle, ir.right);
+			VehicleOrderID leader_index;
+			const Order *mirrored = this->GetMirroredOrderOfRow(row, &leader_index);
+			if (mirrored != nullptr) {
+				DrawOrderString(this->mirror_leader, mirrored, leader_index, y, false, false, ir.left, middle, ir.right, true);
+			} else {
+				const VehicleOrderID i = this->RowToOrder(row);
+				DrawOrderString(this->vehicle, this->vehicle->GetOrder(i), i, y, i == this->selected_order, false, ir.left, middle, ir.right);
+			}
 			y += line_height;
-
-			i++;
-			order = this->vehicle->orders->GetNextNoWrap(order);
 		}
 
-		if (this->vscroll->IsVisible(i)) {
+		if (row == num_rows - 1 && this->vscroll->IsVisible(row)) {
 			StringID str = this->vehicle->IsOrderListShared() ? STR_ORDERS_END_OF_SHARED_ORDERS : STR_ORDERS_END_OF_ORDERS;
-			DrawString(rtl ? ir.left : middle, rtl ? middle : ir.right, y, str, (i == this->selected_order) ? TextColour::White : TextColour::Black);
+			DrawString(rtl ? ir.left : middle, rtl ? middle : ir.right, y, str, (row == selected_row) ? TextColour::White : TextColour::Black);
 		}
 	}
 
@@ -2765,13 +2818,17 @@ public:
 		int y = ir.top;
 		int line_height = this->GetWidget<NWidgetBase>(WID_O_ORDER_LIST)->resize_y;
 
-		int i = this->vscroll->GetPosition();
+		int row = this->vscroll->GetPosition();
 
 		/* Draw the orders. */
-		while (i < this->vehicle->GetNumOrders()) {
+		for (; row < this->GetRowCount() - 1; row++, y += line_height) {
 			/* Don't draw anything if it extends past the end of the window. */
-			if (!this->vscroll->IsVisible(i)) break;
+			if (!this->vscroll->IsVisible(row)) break;
 
+			/* No occupancy for the mirrored orders of the leading train. */
+			if (this->GetMirroredOrderOfRow(row) != nullptr) continue;
+
+			const VehicleOrderID i = this->RowToOrder(row);
 			const Order *order = this->vehicle->GetOrder(i);
 
 			uint8_t occupancy = order->GetOccupancy();
@@ -2784,9 +2841,6 @@ public:
 				}
 				DrawString(ir.left, ir.right, y, GetString(STR_ORDERS_OCCUPANCY_PERCENT, occupancy - 1), colour);
 			}
-			y += line_height;
-
-			i++;
 		}
 	}
 
@@ -4399,8 +4453,9 @@ public:
 
 	void ScrollTowardsOrder(VehicleOrderID order_pos)
 	{
-		this->vscroll->SetCount(this->vehicle->GetNumOrders() + 1);
-		this->vscroll->ScrollTowards(order_pos);
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(this->GetRowCount());
+		this->vscroll->ScrollTowards(this->OrderToRow(order_pos));
 		this->SetDirty();
 	}
 
