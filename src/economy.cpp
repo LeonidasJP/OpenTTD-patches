@@ -1581,7 +1581,7 @@ void PrepareUnloadCargoUnit(Vehicle *front_v)
 						front_v->last_station_visited, next_station.Get(v->cargo_type),
 						GetUnloadType(v), ge,
 						v->cargo_type, front_v->cargo_payment,
-						v->GetMovingFront()->GetCargoTile());
+						v->GetMovingFront()->GetCargoTile(), IsCouplingSplitStaging());
 				if (v->cargo.UnloadCount() > 0) v->vehicle_flags.Set(VehicleFlag::CargoUnloading);
 			}
 		}
@@ -2084,6 +2084,18 @@ static void LoadUnloadVehicle(Vehicle *front)
 	const CargoStationIDVectorSet passive_next_station = passive_stops ? passive->GetNextStoppingStation() : CargoStationIDVectorSet{};
 	bool passive_anything_unloaded = false;
 
+	/* When both trains of a combination load here, cargo goes preferably into the train with which it continues after the split,
+	 * using the fixed choice of its next hop at the split station, see GetCouplingSplitVia. */
+	const CouplingSplitRoute split_route = passive_stops ? GetCouplingSplitRoute(Train::From(front)) : CouplingSplitRoute{};
+	const bool use_split_route = split_route.IsValid() && split_route.split_station != last_visited;
+	CargoArray unit_free_capacity[2]{}; // Free capacity of the leading [0] and the passive [1] train, for the cargo types they load here.
+	if (use_split_route) {
+		for (const Vehicle *v = front; v != nullptr; v = v->Next()) {
+			if (v->cargo_cap == 0 || GetLoadType(v) == OrderLoadType::NoLoad) continue;
+			unit_free_capacity[GetCargoUnitFront(v) == passive ? 1 : 0][v->cargo_type] += v->cargo_cap - std::min<uint>(v->cargo_cap, v->cargo.StoredCount());
+		}
+	}
+
 	uint artic_part = 0; // Articulated part we are currently trying to load. (not counting parts without capacity)
 	bool suppress_artic_load = false;
 	Vehicle *moving_front = front->GetMovingFront();
@@ -2279,7 +2291,22 @@ static void LoadUnloadVehicle(Vehicle *front)
 				if (v->cargo.StoredCount() == 0) TriggerVehicleRandomisation(v, VehicleRandomTrigger::NewCargo);
 				if (_settings_game.order.gradual_loading) cap_left = std::min(cap_left, GetLoadAmount(v));
 
-				uint loaded = ged->cargo.Load(cap_left, &v->cargo, unit_next_station.Get(v->cargo_type), v->GetCargoTile());
+				uint loaded;
+				if (use_split_route) {
+					const StationID own_after = in_passive ? split_route.passive_after : split_route.leader_after;
+					const StationID other_after = in_passive ? split_route.leader_after : split_route.passive_after;
+					const bool other_has_room = unit_free_capacity[in_passive ? 0 : 1][v->cargo_type] > 0;
+					const CargoType cargo = v->cargo_type;
+					loaded = ged->cargo.LoadFiltered(cap_left, &v->cargo, unit_next_station.Get(v->cargo_type), v->GetCargoTile(), [&](const CargoPacket *cp) {
+						const StationID via = GetCouplingSplitVia(cp, split_route.split_station, cargo);
+						/* Cargo which continues with the other train only boards this train when the other train is full. */
+						return via == own_after || via != other_after || !other_has_room;
+					});
+					uint &free = unit_free_capacity[in_passive ? 1 : 0][v->cargo_type];
+					free -= std::min(free, loaded);
+				} else {
+					loaded = ged->cargo.Load(cap_left, &v->cargo, unit_next_station.Get(v->cargo_type), v->GetCargoTile());
+				}
 				if (v->cargo.ActionCount(VehicleCargoList::MoveToAction::Load) > 0) {
 					/* Remember if there are reservations left so that we don't stop
 					 * loading before they're loaded. */
