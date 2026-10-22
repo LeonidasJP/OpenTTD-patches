@@ -5176,7 +5176,13 @@ static void TrainEnterStation(Train *consist, StationID station)
 	consist->force_proceed = TFP_NONE;
 	InvalidateWindowData(WindowClass::VehicleView, consist->index);
 
-	consist->BeginLoading();
+	/* At the station where a combination splits, the cargo first moves to the train with which it continues. */
+	const bool coupled_split = IsTrainCoupled(consist) && WillCombinationSplitAt(consist, station);
+	if (coupled_split) ExchangeCargoBeforeSplit(consist);
+	{
+		CouplingSplitStagingScope staging(coupled_split);
+		consist->BeginLoading();
+	}
 
 	if (consist->coupling_target != VehicleID::Invalid()) OnCouplingTrainEnteredStation(consist);
 	if (IsTrainCoupled(consist)) OnCombinationEnteredStation(consist, station);
