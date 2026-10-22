@@ -373,7 +373,18 @@ Deze aanpak werkt voor alle soorten lading en voor elke verdeling (symmetrisch, 
 - **Treinscherm:**
   - een statusregel, bijvoorbeeld "Gekoppeld aan *Trein 12* tot *Station E*" of "Wacht op koppeling (nog 1:20)";
   - een combinatie-overzicht met beide treinen.
-- **Voertuiglijst:** passieve stellen blijven zichtbaar met hun eigen nummer en de status "gekoppeld". Een klik opent de combinatie.
+- **Voertuiglijst en eigen venster** (besluit opdrachtgever, fase 4): passieve stellen blijven zichtbaar in alle voertuiglijsten (bedrijf, groep, gedeelde orders, station, depot), met hun eigen nummer en de status "Gekoppeld aan *Trein 12*". Een klik opent hun **eigen** voertuigvenster:
+  - de camera volgt de kop van het passieve stel;
+  - Orders, Dienstregeling en Details werken normaal. De eigen orders blijven bewerkbaar;
+  - Starten/stoppen, naar depot sturen, ombouwen, keren en klonen zijn uitgeschakeld. Die horen bij de combinatie. "Order overslaan" is ook uitgeschakeld, want de positie in de orders volgt de combinatie;
+  - Op het vertrekbord opent een klik op een passief stel daarom ook zijn eigen venster.
+- **Groep en statistiek:** het passieve stel blijft lid van zijn eigen groep en telt daar mee (aantal, winst, motoren), alsof er niets aan de hand is. `UpdateTrainGroupID` geeft het passieve deel van de keten de groep uit het koppelrecord. Het stel kan ook tijdens het koppelen naar een andere groep. Oude savegames waarin het passieve deel de groep van de leider had, worden bij het laden hersteld.
+- **Commando's:** order-, dienstregelings-, scheduled dispatch-, naam-, onderhouds- en groepscommando's accepteren de kop van een passief stel. Orders van een passief stel kopiëren of delen naar een ander voertuig mag; orders kopiëren of delen náár een passief stel niet, net als order overslaan.
+- **Gespiegelde orders:** het orderscherm en het dienstregelingsscherm van een gekoppeld passief stel tonen vóór zijn huidige order de orders van de leider tussen het laatst bezochte station van het passieve stel en het station van zijn huidige order:
+  - het begin is de laatste order van de leider (terugzoekend vanaf zijn huidige order, hoogstens één ronde) naar het laatst bezochte station van het passieve stel; die order zelf telt niet mee;
+  - het einde is de eerste order van de leider daarna naar het station van de huidige order van het passieve stel; ook die telt niet mee, want het passieve stel heeft daar zijn eigen regel;
+  - wordt het einde niet gevonden, dan worden er geen gespiegelde orders getoond;
+  - de regels zijn grijs, tonen de tekst en tijden van de leider, en zijn niet te selecteren of te bewerken.
 - **Nieuwsberichten:**
   - koppelen mislukt omdat de partner te laat is;
   - koppelen geweigerd: te lang, te veel stellen, of het stel zou nooit meer loskomen;
