@@ -313,6 +313,14 @@
 	</p>
 	<p>See also: <a href="#railtype_signal_restriction_info">railtype_signal_restriction_info variable</a></p>
 	<p>This is indicated by the feature name: <font face="monospace">action0_railtype_restricted_signals</font>, version 1</p>
+	<h4 id="railtype_enable_coupling_aspect">Enable coupling aspect flag for custom signal sprites (mappable property: railtype_enable_coupling_aspect)</h4>
+	<p>This applies to <a href="https://newgrf-specs.tt-wiki.net/wiki/Action3/Railtypes#Signal_sprites_.280B.29">Action 2/3 - Railtype custom signal sprites</a>.<br />
+	When enabled, bit 25 of variable 18 (extra callback info) is set if the (green) signal allows a train to drive into the occupied platform behind it,
+	to couple to the train waiting there. The GRF may for example let the signal flash, using the animation counter (global variable 0A).<br />
+	When not enabled, such a signal is drawn with the aspect "next signal red" instead of its actual aspect (yellow if the signal has extra aspects, otherwise green).<br />
+	The property length is 1 byte. 0 is disabled (default). 1 is enabled.
+	</p>
+	<p>This is indicated by the feature name: <font face="monospace">action0_railtype_coupling_aspect</font>, version 1</p>
 	<h4 id="railtype_enable_signal_recolour">Enable recolouring for custom signal sprites (mappable property: railtype_enable_signal_recolour)</h4>
 	<p>This applies to <a href="https://newgrf-specs.tt-wiki.net/wiki/Action3/Railtypes#Signal_sprites_.280B.29">Action 2/3 - Railtype custom signal sprites</a>.<br />
 	When enabled, in addition to returning a sprite, register 0x100 may be set to the following:
@@ -447,6 +455,15 @@
 	</p>
 	<p>See also: <a href="#signals_signal_restriction_info">signals_signal_restriction_info variable</a></p>
 	<p>This is indicated by the feature name: <font face="monospace">action0_signals_restricted_signals</font>, version 1</p>
+	<h4 id="signals_enable_coupling_aspect">Enable coupling aspect flag for custom signal sprites (mappable property: signals_enable_coupling_aspect)</h4>
+	<p>This applies to <a href="#a3signals_custom_signal_sprites">Action 2/3 Signals (Feature 0E) custom signal sprites</a> for this GRF.<br />
+	When enabled, bit 25 of variable 18 (extra callback info) is set if the (green) signal allows a train to drive into the occupied platform behind it,
+	to couple to the train waiting there. The GRF may for example let the signal flash, using the animation counter (global variable 0A).<br />
+	When not enabled, such a signal is drawn with the aspect "next signal red" instead of its actual aspect (yellow if the signal has extra aspects, otherwise green).<br />
+	The property length is 1 byte. 0 is disabled (default). 1 is enabled.<br />
+	The Action 0 Id field is not used, the value is ignored.
+	</p>
+	<p>This is indicated by the feature name: <font face="monospace">action0_signals_coupling_aspect</font>, version 1</p>
 	<h4 id="signals_enable_signal_recolour">Enable recolouring for custom signal sprites (mappable property: signals_enable_signal_recolour)</h4>
 	<p>This applies to <a href="#a3signals_custom_signal_sprites">Action 2/3 Signals (Feature 0E) custom signal sprites</a> for this GRF.<br />
 	When enabled, in addition to returning a sprite, register 0x100 may be set to the following:
