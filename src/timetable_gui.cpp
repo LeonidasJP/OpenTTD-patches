@@ -35,6 +35,9 @@
 
 #include "widgets/timetable_widget.h"
 
+#include "train.h"
+#include "train_coupling.h"
+
 #include "table/sprites.h"
 #include "table/strings.h"
 
@@ -422,6 +425,9 @@ struct TimetableWindow : GeneralVehicleWindow {
 	bool set_start_date_all = false;   ///< Set start date using minutes text entry: this is a set all vehicle (ctrl-click) action
 	bool change_timetable_all = false; ///< Set wait time or speed for all timetable entries (ctrl-click) action
 	int summary_warnings = 0;          ///< Number of summary warnings shown
+	const Train *mirror_leader = nullptr;   ///< Head of the combination when this is a coupled passive train, see #mirror_orders.
+	std::vector<VehicleOrderID> mirror_orders; ///< Orders of the leading train shown (greyed) in the trip to the current order of a coupled passive train.
+	int mirror_row = -1;               ///< Logical row (order or travel line) before which #mirror_orders are shown, -1 if none.
 
 	enum {
 		MAX_SUMMARY_WARNINGS = 10,
@@ -513,8 +519,40 @@ struct TimetableWindow : GeneralVehicleWindow {
 	{
 		int32_t sel = this->vscroll->GetScrolledRowFromWidget(y, this, WID_VT_TIMETABLE_PANEL, WidgetDimensions::scaled.framerect.top);
 		if (sel == INT32_MAX) return sel;
-		assert(IsInsideBS(sel, 0, v->GetNumOrders() * 2));
-		return sel;
+		if (!IsInsideBS(sel, 0, v->GetNumOrders() * 2 + (int)this->mirror_orders.size())) return INT32_MAX;
+		/* The mirrored orders of the leading train can not be selected. */
+		if (this->GetMirroredOrderOfRow(sel) != nullptr) return INT32_MAX;
+		return this->RowToLogical(sel);
+	}
+
+	/** Update the orders of the leading train which are shown in the timetable of a coupled passive train. */
+	void UpdateMirroredOrders()
+	{
+		this->mirror_orders.clear();
+		this->mirror_row = -1;
+		this->mirror_leader = nullptr;
+		if (this->vehicle->type != VehicleType::Train || this->vehicle->GetNumOrders() == 0) return;
+		this->mirror_orders = GetMirroredCouplingOrders(Train::From(this->vehicle), &this->mirror_leader);
+		if (this->mirror_orders.empty()) return;
+		/* Show them after the travel line to the current order, which is the last line for the first order. */
+		const VehicleOrderID target = this->vehicle->cur_real_order_index % this->vehicle->GetNumOrders();
+		this->mirror_row = (target == 0) ? this->vehicle->GetNumOrders() * 2 : target * 2;
+	}
+
+	/** Logical row (order line or travel line) of a visible row, rows of mirrored orders give the row which follows them. */
+	int RowToLogical(int row) const
+	{
+		if (this->mirror_row < 0 || row < this->mirror_row) return row;
+		return std::max<int>(this->mirror_row, row - (int)this->mirror_orders.size());
+	}
+
+	/** Mirrored order of the leading train in a visible row, nullptr if the row shows a line of this vehicle. */
+	const Order *GetMirroredOrderOfRow(int row, VehicleOrderID *leader_index = nullptr) const
+	{
+		if (this->mirror_row < 0 || row < this->mirror_row || row >= this->mirror_row + (int)this->mirror_orders.size()) return nullptr;
+		const VehicleOrderID index = this->mirror_orders[row - this->mirror_row];
+		if (leader_index != nullptr) *leader_index = index;
+		return this->mirror_leader->GetOrder(index);
 	}
 
 	/**
@@ -607,7 +645,8 @@ struct TimetableWindow : GeneralVehicleWindow {
 		}
 		int selected = this->sel_index;
 
-		this->vscroll->SetCount(order_count * 2);
+		this->UpdateMirroredOrders();
+		this->vscroll->SetCount(order_count * 2 + (int)this->mirror_orders.size());
 
 		if (v->owner == _local_company) {
 			bool disable = true;
@@ -765,11 +804,10 @@ struct TimetableWindow : GeneralVehicleWindow {
 		switch (widget) {
 			case WID_VT_TIMETABLE_PANEL: {
 				Rect tr = r.Shrink(WidgetDimensions::scaled.framerect);
-				int i = this->vscroll->GetPosition();
 				Dimension lock_d = GetSpriteSize(SPR_LOCK);
 				int line_height = std::max<int>(GetCharacterHeight(FontSize::Normal), lock_d.height);
-				VehicleOrderID order_id = (i + 1) / 2;
-				bool final_order = false;
+				const int num_orders = v->GetNumOrders();
+				const int num_rows = num_orders * 2 + (int)this->mirror_orders.size();
 
 				format_buffer buffer;
 
@@ -777,70 +815,69 @@ struct TimetableWindow : GeneralVehicleWindow {
 				int index_column_width = GetStringBoundingBox(GetStringInPlace(buffer, STR_ORDER_INDEX, GetParamMaxValue(v->GetNumOrders(), 2))).width + 2 * GetSpriteSize(rtl ? SPR_ARROW_RIGHT : SPR_ARROW_LEFT).width + WidgetDimensions::scaled.hsep_normal;
 				int middle = rtl ? tr.right - index_column_width : tr.left + index_column_width;
 
-				const Order *order = v->GetOrder(order_id);
-				while (order != nullptr) {
+				for (int visible_row = this->vscroll->GetPosition(); visible_row < num_rows; visible_row++, tr.top += line_height) {
 					/* Don't draw anything if it extends past the end of the window. */
-					if (!this->vscroll->IsVisible(i)) break;
+					if (!this->vscroll->IsVisible(visible_row)) break;
 
-					if (i % 2 == 0) {
-						DrawOrderString(v, order, order_id, tr.top, i == selected, true, tr.left, middle, tr.right);
-
-						order_id++;
-
-						if (order_id >= v->GetNumOrders()) {
-							order = v->GetOrder(0);
-							final_order = true;
-						} else {
-							order = v->orders->GetNext(order);
-						}
-					} else {
-						ExtendedTextColour colour = (i == selected) ? TextColour::White : TextColour::Black;
-						if (order->IsType(OT_CONDITIONAL) || order->HasNoTimetableTimes()) {
-							GetStringInPlace(buffer, STR_TIMETABLE_NO_TRAVEL);
-						} else if (order->IsType(OT_IMPLICIT)) {
-							GetStringInPlace(buffer, STR_TIMETABLE_NOT_TIMETABLEABLE);
-							colour = ExtendedTextColour{(i == selected) ? TextColour::Silver : TextColour::Grey, ExtendedTextColourFlag::NoShade};
-						} else if (!order->IsTravelTimetabled()) {
-							if (order->GetTravelTime() > 0) {
-								auto [str, value] = GetTimetableParameters(order->GetTravelTime());
-								if (order->GetMaxSpeed() != UINT16_MAX) {
-									GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_SPEED_ESTIMATED, str, value, PackVelocity(order->GetMaxSpeed(), v->type));
-								} else {
-									GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_ESTIMATED, str, value);
-								}
-							} else {
-								if (order->GetMaxSpeed() != UINT16_MAX) {
-									GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_NOT_TIMETABLED_SPEED, PackVelocity(order->GetMaxSpeed(), v->type));
-								} else {
-									GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_NOT_TIMETABLED);
-								}
-							}
-						} else {
-							auto [str, value] = GetTimetableParameters(order->GetTimetabledTravel());
-							if (order->GetMaxSpeed() != UINT16_MAX) {
-								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_SPEED, str, value, PackVelocity(order->GetMaxSpeed(), v->type));
-							} else {
-								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR, str, value);
-							}
-						}
-
-						int edge = DrawString(rtl ? tr.left : middle, rtl ? middle : tr.right, tr.top, buffer, colour);
-
-						if (order->IsTravelFixed()) {
-							Dimension lock_d = GetSpriteSize(SPR_LOCK);
-							DrawPixelInfo tmp_dpi;
-							if (FillDrawPixelInfo(&tmp_dpi, rtl ? tr.left : middle, tr.top, rtl ? middle : tr.right, lock_d.height)) {
-								AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
-
-								DrawSprite(SPR_LOCK, PAL_NONE, rtl ? edge - 3 - lock_d.width - tr.left : edge + 3 - middle, 0);
-							}
-						}
-
-						if (final_order) break;
+					VehicleOrderID leader_index;
+					const Order *mirrored = this->GetMirroredOrderOfRow(visible_row, &leader_index);
+					if (mirrored != nullptr) {
+						/* A stop of the leading train during the trip of the coupled passive train. */
+						DrawOrderString(this->mirror_leader, mirrored, leader_index, tr.top, false, true, tr.left, middle, tr.right, true);
+						continue;
 					}
 
-					i++;
-					tr.top += line_height;
+					const int row = this->RowToLogical(visible_row);
+					if (row % 2 == 0) {
+						const VehicleOrderID order_id = row / 2;
+						DrawOrderString(v, v->GetOrder(order_id), order_id, tr.top, row == selected, true, tr.left, middle, tr.right);
+						continue;
+					}
+
+					/* Travel line to the next order, the last travel line goes to the first order. */
+					const Order *order = v->GetOrder(((row + 1) / 2) % num_orders);
+					ExtendedTextColour colour = (row == selected) ? TextColour::White : TextColour::Black;
+					if (order->IsType(OT_CONDITIONAL) || order->HasNoTimetableTimes()) {
+						GetStringInPlace(buffer, STR_TIMETABLE_NO_TRAVEL);
+					} else if (order->IsType(OT_IMPLICIT)) {
+						GetStringInPlace(buffer, STR_TIMETABLE_NOT_TIMETABLEABLE);
+						colour = ExtendedTextColour{(row == selected) ? TextColour::Silver : TextColour::Grey, ExtendedTextColourFlag::NoShade};
+					} else if (!order->IsTravelTimetabled()) {
+						if (order->GetTravelTime() > 0) {
+							auto [str, value] = GetTimetableParameters(order->GetTravelTime());
+							if (order->GetMaxSpeed() != UINT16_MAX) {
+								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_SPEED_ESTIMATED, str, value, PackVelocity(order->GetMaxSpeed(), v->type));
+							} else {
+								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_ESTIMATED, str, value);
+							}
+						} else {
+							if (order->GetMaxSpeed() != UINT16_MAX) {
+								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_NOT_TIMETABLED_SPEED, PackVelocity(order->GetMaxSpeed(), v->type));
+							} else {
+								GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_NOT_TIMETABLED);
+							}
+						}
+					} else {
+						auto [str, value] = GetTimetableParameters(order->GetTimetabledTravel());
+						if (order->GetMaxSpeed() != UINT16_MAX) {
+							GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR_SPEED, str, value, PackVelocity(order->GetMaxSpeed(), v->type));
+						} else {
+							GetStringInPlace(buffer, STR_TIMETABLE_TRAVEL_FOR, str, value);
+						}
+					}
+
+					int edge = DrawString(rtl ? tr.left : middle, rtl ? middle : tr.right, tr.top, buffer, colour);
+
+					if (order->IsTravelFixed()) {
+						Dimension lock_d = GetSpriteSize(SPR_LOCK);
+						DrawPixelInfo tmp_dpi;
+						if (FillDrawPixelInfo(&tmp_dpi, rtl ? tr.left : middle, tr.top, rtl ? middle : tr.right, lock_d.height)) {
+							AutoRestoreBackup dpi_backup(_cur_dpi, &tmp_dpi);
+
+							DrawSprite(SPR_LOCK, PAL_NONE, rtl ? edge - 3 - lock_d.width - tr.left : edge + 3 - middle, 0);
+						}
+					}
+
 				}
 				break;
 			}
@@ -878,9 +915,17 @@ struct TimetableWindow : GeneralVehicleWindow {
 				std::string arrival_abbr = GetString(STR_TIMETABLE_ARRIVAL_ABBREVIATION);
 				std::string departure_abbr = GetString(STR_TIMETABLE_DEPARTURE_ABBREVIATION);
 
-				for (int i = this->vscroll->GetPosition(); i / 2 < v->GetNumOrders(); ++i) { // note: i is also incremented in the loop
+				const int num_rows = v->GetNumOrders() * 2 + (int)this->mirror_orders.size();
+				for (int visible_row = this->vscroll->GetPosition(); visible_row < num_rows; ++visible_row) {
 					/* Don't draw anything if it extends past the end of the window. */
-					if (!this->vscroll->IsVisible(i)) break;
+					if (!this->vscroll->IsVisible(visible_row)) break;
+
+					/* No times of this vehicle for the mirrored orders of the leading train. */
+					if (this->GetMirroredOrderOfRow(visible_row) != nullptr) {
+						tr.top += line_height;
+						continue;
+					}
+					const int i = this->RowToLogical(visible_row);
 
 					if (i % 2 == 0) {
 						if (arr_dep[i / 2].arrival != INVALID_TICKS) {
@@ -1025,7 +1070,7 @@ struct TimetableWindow : GeneralVehicleWindow {
 
 				/* Allow change time by double-clicking order */
 				if (click_count == 2) {
-					this->sel_index = (selected == OrderID::Invalid()) ? -1 : selected;
+					this->sel_index = (selected == OrderID::Invalid() || selected == INT32_MAX) ? -1 : selected;
 					this->SetButtonDisabledStates();
 					if (!this->IsWidgetDisabled(WID_VT_CHANGE_TIME)) {
 						this->OnClick(pt, WID_VT_CHANGE_TIME, click_count);
