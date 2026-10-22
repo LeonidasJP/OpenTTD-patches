@@ -76,6 +76,9 @@
 #include "order_backup.h"
 #include "train.h"
 #include "train_coupling.h"
+#include "group.h"
+#include "group_cmd.h"
+#include <map>
 #include "train_coupling_cmd.h"
 #include "vehicle_cmd.h"
 #include "order_cmd.h"
@@ -944,6 +947,88 @@ static bool ConListTrainCouplings(std::span<std::string_view> argv)
 		IConsolePrint(CC_DEFAULT, "Combination: head {} (unit {}), passive head {} (unit {}), passive group {}, identities swapped: {}",
 				tc.head, head != nullptr ? head->unitnumber : 0, tc.passive_head, passive != nullptr ? passive->unitnumber : 0, tc.passive_group, tc.identities_swapped ? "yes" : "no");
 	}
+	return true;
+}
+
+/**
+ * Debug: move a train, also the passive train of a coupled combination, to a group.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConSetTrainGroup(std::span<std::string_view> argv)
+{
+	if (argv.size() != 3) {
+		IConsolePrint(CC_HELP, "Debug: move a train to a group. Usage: 'set_train_group <train number> <group id|new|default>'.");
+		return true;
+	}
+	Train *v = FindLocalTrainIdentityByUnitNumber(argv[1]);
+	if (v == nullptr) {
+		IConsolePrint(CC_ERROR, "Train not found.");
+		return true;
+	}
+	GroupID group = DEFAULT_GROUP;
+	if (argv[2] == "new") {
+		group = NEW_GROUP;
+	} else if (argv[2] != "default") {
+		auto id = ParseType<uint16_t>(argv[2]);
+		if (!id.has_value()) return false;
+		group = GroupID(*id);
+	}
+	Backup<CompanyID> cur_company(_current_company, v->owner, FILE_LINE);
+	CommandCost ret = Command<Commands::AddVehicleToGroup>::Do(DoCommandFlag::Execute, group, v->index, false);
+	cur_company.Restore();
+	IConsolePrint(CC_DEFAULT, "set_train_group: {}", ret.Succeeded() ? "done" : "failed");
+	return true;
+}
+
+/**
+ * Debug: check the group statistics by recalculating them.
+ * @copydoc IConsoleCmdProc
+ */
+static bool ConCheckGroupStats(std::span<std::string_view> argv)
+{
+	if (argv.empty()) {
+		IConsolePrint(CC_HELP, "Debug: recalculate the group statistics and report differences. Usage: 'check_group_stats'.");
+		return true;
+	}
+	struct Snapshot {
+		uint16_t num_vehicle;
+		uint16_t num_vehicle_min_age;
+		btree::btree_map<EngineID, uint16_t> num_engines;
+		bool operator==(const Snapshot &) const = default;
+	};
+	auto engines = [](const btree::btree_map<EngineID, uint16_t> &in) {
+		btree::btree_map<EngineID, uint16_t> out;
+		for (const auto &e : in) {
+			if (e.second != 0) out[e.first] = e.second;
+		}
+		return out;
+	};
+	auto take = [&](std::map<std::string, Snapshot> &out) {
+		for (const Company *c : Company::Iterate()) {
+			const GroupStatistics &a = c->group_all[VehicleType::Train];
+			const GroupStatistics &d = c->group_default[VehicleType::Train];
+			out[fmt::format("company {} all", c->index)] = { a.num_vehicle, a.num_vehicle_min_age, engines(a.num_engines) };
+			out[fmt::format("company {} default", c->index)] = { d.num_vehicle, d.num_vehicle_min_age, engines(d.num_engines) };
+		}
+		for (const Group *g : Group::Iterate()) {
+			out[fmt::format("group {}", g->index)] = { g->statistics.num_vehicle, g->statistics.num_vehicle_min_age, engines(g->statistics.num_engines) };
+		}
+	};
+	std::map<std::string, Snapshot> before, after;
+	take(before);
+	GroupStatistics::UpdateAfterLoad();
+	GroupStatistics::UpdateProfits();
+	take(after);
+	uint differences = 0;
+	for (const auto &it : before) {
+		const Snapshot &b = it.second;
+		const Snapshot &n = after[it.first];
+		uint num_engines = 0;
+		for (const auto &e : n.num_engines) num_engines += e.second;
+		IConsolePrint(CC_DEFAULT, "{}: vehicles {} (recalculated {}), engines recalculated {}{}", it.first, b.num_vehicle, n.num_vehicle, num_engines, b == n ? "" : " MISMATCH");
+		if (!(b == n)) differences++;
+	}
+	IConsolePrint(CC_DEFAULT, "check_group_stats: {} differences", differences);
 	return true;
 }
 
@@ -5076,6 +5161,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("dump_rail_tiles",         ConDumpRailTiles);
 	IConsole::CmdRegister("list_train_couplings",    ConListTrainCouplings);
 	IConsole::CmdRegister("orders_json",             ConOrdersJson);
+	IConsole::CmdRegister("set_train_group",         ConSetTrainGroup);
+	IConsole::CmdRegister("check_group_stats",       ConCheckGroupStats);
 	IConsole::CmdRegister("reset_enginepool",        ConResetEnginePool,  ConHookNoNetwork);
 	IConsole::CmdRegister("return",                  ConReturn);
 	IConsole::CmdRegister("screenshot",              ConScreenShot);
