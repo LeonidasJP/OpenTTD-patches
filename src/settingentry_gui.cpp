@@ -878,6 +878,7 @@ SettingsContainer &GetSettingsTree()
 				signals->Add(new SettingEntry("gui.drag_signals_stop_restricted_signal"));
 				signals->Add(new SettingEntry("gui.auto_remove_signals"));
 				signals->Add(new SettingEntry("gui.show_restricted_signal_recolour"));
+				signals->Add(new SettingEntry("gui.flash_coupling_signals"));
 				signals->Add(new SettingEntry("gui.show_all_signal_default"));
 				signals->Add(new SettingEntry("gui.show_progsig_ui"));
 				signals->Add(new SettingEntry("gui.show_noentrysig_ui"));

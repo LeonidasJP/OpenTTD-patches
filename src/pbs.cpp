@@ -1528,6 +1528,32 @@ TileIndex VehiclePosTraceRestrictPreviousSignalCallback(const Train *v, const vo
 }
 
 /**
+ * Find the last PBS signal of the reservation of a train before the platform of the train it approaches to couple.
+ * @param v The approaching train.
+ * @param[out] signal_tile The tile of the signal.
+ * @param[out] signal_trackdir The trackdir of the signal.
+ * @return True if the reservation reaches the platform, and a signal was found before it.
+ */
+bool FindLastSignalBeforeCouplingPlatform(const Train *v, TileIndex &signal_tile, Trackdir &signal_trackdir)
+{
+	bool reached = false;
+	signal_tile = INVALID_TILE;
+	const Train *moving_front = v->GetMovingFront();
+	FollowReservationEnumerate(v->owner, v->GetIndirectCompatibleRailTypes(), moving_front->tile, moving_front->GetVehicleTrackdir(), FRF_NONE, [&](TileIndex tile, Trackdir trackdir) -> bool {
+		if (IsRailStationTile(tile) && IsCouplingApproachPlatformTile(v, tile)) {
+			reached = true;
+			return true;
+		}
+		if (IsTileType(tile, TileType::Railway) && HasSignals(tile) && HasPbsSignalOnTrackdir(tile, trackdir)) {
+			signal_tile = tile;
+			signal_trackdir = trackdir;
+		}
+		return false;
+	});
+	return reached && signal_tile != INVALID_TILE;
+}
+
+/**
  * Test whether a train's reservation passes through a given tile.
  */
 bool TrainReservationPassesThroughTile(const Train *v, TileIndex search_tile)

@@ -33,6 +33,12 @@
 #include "vehicle_gui.h"
 #include "window_func.h"
 
+#include "rail_map.h"
+#include "pbs.h"
+#include "viewport_func.h"
+#include "settings_type.h"
+#include "3rdparty/cpp-btree/btree_set.h"
+#include "date_func.h"
 #include "table/strings.h"
 
 #include "safeguards.h"
@@ -896,6 +902,66 @@ bool IsTrainCouplingTargetOfOtherTrain(const Train *target, const Train *v, bool
 		return true;
 	}
 	return false;
+}
+
+/** Rail tiles with a signal which shows the coupling aspect, see HasSignalCouplingAspect. This only affects drawing. */
+static btree::btree_set<TileIndex> _coupling_signal_tiles;
+
+/**
+ * A train reserved its path into the platform of the train to couple to: the last signal before that platform shows the coupling aspect.
+ * @param v The approaching train.
+ */
+void MarkCouplingApproachSignal(const Train *v)
+{
+	TileIndex signal_tile = INVALID_TILE;
+	Trackdir signal_trackdir = INVALID_TRACKDIR;
+	if (!FindLastSignalBeforeCouplingPlatform(v, signal_tile, signal_trackdir)) return;
+	SetSignalCouplingAspect(signal_tile, signal_trackdir);
+	_coupling_signal_tiles.insert(signal_tile);
+	MarkSingleSignalDirty(signal_tile, signal_trackdir);
+}
+
+/** Rebuild the tiles with signals which show the coupling aspect after loading a game. */
+void RebuildCouplingSignalTiles()
+{
+	_coupling_signal_tiles.clear();
+	for (TileIndex tile(0); tile < Map::Size(); ++tile) {
+		if (IsTileType(tile, TileType::Railway) && HasSignals(tile) && GetSignalCouplingAspects(tile) != 0) _coupling_signal_tiles.insert(tile);
+	}
+}
+
+/**
+ * Get the tiles with signals which show the coupling aspect, for debugging.
+ * @return The tiles.
+ */
+std::vector<TileIndex> GetCouplingSignalTiles()
+{
+	return { _coupling_signal_tiles.begin(), _coupling_signal_tiles.end() };
+}
+
+/** Redraw the signals which show the coupling aspect, so they flash. Only affects drawing. */
+void AnimateCouplingSignals()
+{
+	if ((_scaled_tick_counter % 16) != 0 || _coupling_signal_tiles.empty()) return;
+	for (auto it = _coupling_signal_tiles.begin(); it != _coupling_signal_tiles.end();) {
+		const TileIndex tile = *it;
+		MarkTileDirtyByTile(tile, VMDF_NOT_MAP_MODE);
+		/* Draw a signal which no longer shows the coupling aspect once more, then forget it. */
+		if (!IsTileType(tile, TileType::Railway) || !HasSignals(tile) || GetSignalCouplingAspects(tile) == 0) {
+			it = _coupling_signal_tiles.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+/**
+ * Is a flashing coupling signal in the phase in which its light is off?
+ * @return True if the signal is drawn grey.
+ */
+bool IsCouplingSignalFlashOff()
+{
+	return _settings_client.gui.flash_coupling_signals && ((_scaled_tick_counter / 16) % 2) != 0;
 }
 
 /**

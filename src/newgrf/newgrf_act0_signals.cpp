@@ -47,6 +47,11 @@ static ChangeInfoResult SignalsChangeInfo(uint first, uint last, int prop, const
 				AssignBit(_cur_gps.grffile->new_signal_ctrl_flags, NSCF_RESTRICTEDSIG, buf.ReadByte() != 0);
 				break;
 
+			case A0RPI_SIGNALS_ENABLE_COUPLING_ASPECT:
+				if (MappedPropertyLengthMismatch(buf, 1, mapping_entry)) break;
+				AssignBit(_cur_gps.grffile->new_signal_ctrl_flags, NSCF_COUPLINGSIG, buf.ReadByte() != 0);
+				break;
+
 			case A0RPI_SIGNALS_ENABLE_SIGNAL_RECOLOUR:
 				if (MappedPropertyLengthMismatch(buf, 1, mapping_entry)) break;
 				AssignBit(_cur_gps.grffile->new_signal_ctrl_flags, NSCF_RECOLOUR_ENABLED, buf.ReadByte() != 0);

@@ -166,3 +166,5 @@ STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED_HELPTEXT                :De maximaal toegestane snelheid voor treinen die een bezet perron oprijden om aan een andere trein te koppelen, vanaf het laatste sein voor het perron
 STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED                   :Maximumsnelheid laatste nadering bij koppelen: {STRING2}
 STR_CONFIG_SETTING_TRAIN_COUPLING_FINAL_SPEED_HELPTEXT          :De maximaal toegestane snelheid voor treinen op de laatste tegel voor het koppelen aan een andere trein
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS                       :Standaardseinen laten knipperen voor koppelende treinen: {STRING2}
+STR_CONFIG_SETTING_FLASH_COUPLING_SIGNALS_HELPTEXT              :Laat standaardseinen groen knipperen als een trein een bezet perron in mag rijden om te koppelen aan de trein die daar wacht. Staat dit uit, dan tonen deze seinen gewoon groen. Dit heeft geen invloed op NewGRF-seinen.
