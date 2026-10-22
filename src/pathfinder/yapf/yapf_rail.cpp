@@ -149,6 +149,10 @@ private:
 			/* Only pass the signal into the platform with at most the coupling speed. */
 			if (v->cur_speed > _settings_game.vehicle.train_coupling_speed) return false;
 
+			/* Only one train may drive into the platform to couple to the waiting train. */
+			const Train *target = Train::GetIfValid(v->coupling_target);
+			if (target != nullptr && IsTrainCouplingTargetOfOtherTrain(target, v, true)) return false;
+
 			TileIndex entry = start;
 			for (TileIndex t = TileAdd(start, diff); IsCompatibleTrainStationTile(t, start) && t != this->origin_tile; t = TileAdd(t, diff)) entry = t;
 
