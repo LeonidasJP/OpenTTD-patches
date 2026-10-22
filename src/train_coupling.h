@@ -75,6 +75,10 @@ void OnCombinationEnteredStation(Train *head, StationID station);
 void OnCombinationLeavingStation(Train *head);
 void TickCoupledPassiveTrain(Train *head);
 bool IsPrimaryOrCoupledPassiveVehicle(const Vehicle *v);
+bool IsCoupledPassiveTrain(const Vehicle *v);
+std::vector<Train *> GetCoupledPassiveTrains();
+GroupID GetCoupledPassiveTrainGroup(const Train *passive);
+void SetCoupledPassiveTrainGroup(const Train *passive, GroupID group);
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);

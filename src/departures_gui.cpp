@@ -37,7 +37,6 @@
 #include "tilehighlight_func.h"
 #include "viewport_func.h"
 #include "core/backup_type.hpp"
-#include "train.h"
 #include "train_coupling.h"
 #include "3rdparty/robin_hood/robin_hood.h"
 
@@ -612,13 +611,7 @@ public:
 
 				if (id_v >= this->departures.size()) return; // click out of list bound
 
-				const Vehicle *v = this->departures[id_v]->vehicle;
-				/* The passive train of a coupled combination has no window of its own, show the combination. */
-				if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead)) {
-					v = GetCouplingCombinationHead(Train::From(v));
-					if (v == nullptr) return;
-				}
-				ShowVehicleViewWindow(v);
+				ShowVehicleViewWindow(this->departures[id_v]->vehicle);
 				break;
 			}
 

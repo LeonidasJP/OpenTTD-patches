@@ -1169,7 +1169,7 @@ void Vehicle::PreDestructor()
 
 	if (this->IsEngineCountable()) {
 		GroupStatistics::CountEngine(this, -1);
-		if (this->IsPrimaryVehicle()) GroupStatistics::CountVehicle(this, -1);
+		if (IsPrimaryOrCoupledPassiveVehicle(this)) GroupStatistics::CountVehicle(this, -1);
 		GroupStatistics::UpdateAutoreplace(this->owner);
 
 		if (this->owner == _local_company) InvalidateAutoreplaceWindow(this->engine_type, this->group_id);
@@ -2544,7 +2544,7 @@ void EconomyAgeVehicle(Vehicle *v)
 
 	if (v->economy_age < EconTime::MAX_DATE.AsDelta()) {
 		v->economy_age++;
-		if (v->IsPrimaryVehicle() && v->economy_age == VEHICLE_PROFIT_MIN_AGE + 1) GroupStatistics::VehicleReachedMinAge(v);
+		if (IsPrimaryOrCoupledPassiveVehicle(v) && v->economy_age == VEHICLE_PROFIT_MIN_AGE + 1) GroupStatistics::VehicleReachedMinAge(v);
 	}
 }
 
@@ -4791,8 +4791,8 @@ void Vehicle::DumpVehicleFlagsMultiline(format_target &buffer, const char *base_
 
 void VehiclesYearlyLoop()
 {
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
-		if (v->IsPrimaryVehicle()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
+		if (IsPrimaryOrCoupledPassiveVehicle(v)) {
 			/* show warning if vehicle is not generating enough income last 2 years (corresponds to a red icon in the vehicle list) */
 			Money profit = v->GetDisplayProfitThisYear();
 			if (v->economy_age >= VEHICLE_PROFIT_MIN_AGE && profit < 0) {

@@ -4136,20 +4136,23 @@ public:
 		bool can_control = IsVehicleControlAllowed(v, _local_company);
 		bool refittable_and_stopped_in_depot = IsVehicleRefittable(v);
 
+		/* The passive train of a coupled combination is controlled by the combination. */
+		const bool coupled_passive = IsCoupledPassiveTrain(v);
+
 		this->SetWidgetDisabledState(WID_VV_RENAME, !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_GOTO_DEPOT, !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_REFIT, !refittable_and_stopped_in_depot || !is_localcompany);
-		this->SetWidgetDisabledState(WID_VV_CLONE, !is_localcompany);
+		this->SetWidgetDisabledState(WID_VV_GOTO_DEPOT, !is_localcompany || coupled_passive);
+		this->SetWidgetDisabledState(WID_VV_REFIT, !refittable_and_stopped_in_depot || !is_localcompany || coupled_passive);
+		this->SetWidgetDisabledState(WID_VV_CLONE, !is_localcompany || coupled_passive);
 
 		this->UpdateDepotButton();
 
 		if (v->type == VehicleType::Train) {
 			this->SetWidgetLoweredState(WID_VV_FORCE_PROCEED, Train::From(v)->force_proceed == TFP_SIGNAL);
-			this->SetWidgetDisabledState(WID_VV_FORCE_PROCEED, !can_control);
+			this->SetWidgetDisabledState(WID_VV_FORCE_PROCEED, !can_control || coupled_passive);
 		}
 
 		if (v->type == VehicleType::Train || v->type == VehicleType::Road) {
-			this->SetWidgetDisabledState(WID_VV_TURN_AROUND, !can_control);
+			this->SetWidgetDisabledState(WID_VV_TURN_AROUND, !can_control || coupled_passive);
 		}
 
 		this->SetWidgetDisabledState(WID_VV_ORDER_LOCATION, v->current_order.GetLocation(v) == INVALID_TILE);
@@ -4434,6 +4437,12 @@ public:
 			}
 
 			case WID_VV_START_STOP: // start stop
+				if (IsCoupledPassiveTrain(v)) {
+					/* The passive train of a coupled combination is started and stopped with the combination, show that instead. */
+					const Train *head = GetCouplingCombinationHead(Train::From(v));
+					if (head != nullptr) ShowVehicleViewWindow(head);
+					break;
+				}
 				StartStopVehicle(v, false);
 				break;
 

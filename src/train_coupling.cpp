@@ -398,17 +398,18 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 	SeparateLastLoadingStation(first);
 	SeparateLastLoadingStation(second);
 
-	/* The passive train stops being a primary vehicle. */
-	GroupStatistics::CountVehicle(passive, -1);
-
 	TrainCoupling tc{};
 	tc.passive_group = passive->group_id;
 	tc.identities_swapped = (leader == second);
 
-	CloseTrainHeadWindows(second);
 	if (tc.identities_swapped) {
+		/* The windows show the vehicles, which get another identity. */
 		CloseTrainHeadWindows(first);
+		CloseTrainHeadWindows(second);
 		SwapTrainIdentities(first, second);
+	} else {
+		/* The passive train keeps its windows, but can not be refitted while coupled. */
+		CloseWindowById(WindowClass::VehicleRefit, second->index);
 	}
 
 	/* The combination keeps the driving direction of its first part. */
@@ -433,6 +434,8 @@ void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 
 	/* The timetable of the passive train continues, it heads for its next station order. */
 	AdvanceCoupledPassiveOrders(second);
+	InvalidateVehicleOrder(second, VIWD_MODIFY_ORDERS);
+	SetWindowDirty(WindowClass::VehicleView, second->index);
 
 	UpdateTrainGroupID(first);
 	first->ConsistChanged(CCF_TRACK);
@@ -551,8 +554,7 @@ Train *SplitCombination(Train *head)
 		t->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
 	}
 
-	/* The passive train is a primary vehicle again, it continues in the same running state as the combination. */
-	GroupStatistics::CountVehicle(passive, 1);
+	/* The passive train continues in the same running state as the combination. */
 	Train *leader = (passive == head) ? second : head;
 	passive->vehstatus.Set(VehState::Stopped, leader->vehstatus.Test(VehState::Stopped));
 	PrepareDepartureAfterSplit(passive);
@@ -570,6 +572,7 @@ Train *SplitCombination(Train *head)
 
 	for (Train *t : { head, second }) {
 		t->MarkDirty();
+		InvalidateVehicleOrder(t, VIWD_MODIFY_ORDERS);
 		SetWindowDirty(WindowClass::VehicleView, t->index);
 		SetWindowDirty(WindowClass::VehicleDetails, t->index);
 		InvalidateWindowData(WindowClass::VehicleRefit, t->index, VIWD_CONSIST_CHANGED);
@@ -712,6 +715,13 @@ void ValidateTrainCouplings()
 	for (Train *t : Train::Iterate()) {
 		if (t->flags.Test(VehicleRailFlag::CoupledCombination) && _train_couplings.find(t->index) == _train_couplings.end()) {
 			t->flags.Reset(VehicleRailFlag::CoupledCombination);
+		}
+	}
+
+	/* The passive train keeps its own group, older versions gave it the group of the combination. The group statistics are recalculated after this. */
+	for (const auto &it : _train_couplings) {
+		for (Train *u = Train::Get(it.second.passive_head); u != nullptr; u = u->Next()) {
+			u->group_id = it.second.passive_group;
 		}
 	}
 }
@@ -982,8 +992,13 @@ void OnCombinationEnteredStation(Train *head, StationID station)
 	const Order *leader_order = GetCurrentCouplingOrder(head);
 	if (leader_order != nullptr && leader_order->GetCouplingMode() == OrderCouplingMode::Split) split = true;
 
-	/* The passive train heads for its next station order, combinations coupled by older versions might not have one yet. */
-	if (!passive->current_order.IsType(OT_GOTO_STATION)) AdvanceCoupledPassiveOrders(passive);
+	/* The passive train heads for its next station order. Combinations coupled by older versions might not have one yet,
+	 * and the orders might have been changed while coupled. */
+	const Order *next_order = passive->GetNumManualOrders() > 0 ? passive->GetOrder(passive->cur_real_order_index) : nullptr;
+	if (!passive->current_order.IsType(OT_GOTO_STATION) || next_order == nullptr || !next_order->IsType(OT_GOTO_STATION) ||
+			next_order->GetDestination() != passive->current_order.GetDestination()) {
+		AdvanceCoupledPassiveOrders(passive);
+	}
 
 	const Order *passive_order = passive->GetOrder(passive->cur_real_order_index);
 	if (passive_order != nullptr && passive_order->IsType(OT_GOTO_STATION) && passive_order->GetDestination() == station) {
@@ -1042,7 +1057,56 @@ void TickCoupledPassiveTrain(Train *head)
  */
 bool IsPrimaryOrCoupledPassiveVehicle(const Vehicle *v)
 {
-	return v->IsPrimaryVehicle() || (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead));
+	return v->IsPrimaryVehicle() || IsCoupledPassiveTrain(v);
+}
+
+/**
+ * Is a vehicle the head of the passive train in a coupled combination?
+ * @param v The vehicle.
+ * @return True if the vehicle is the head of a coupled passive train.
+ */
+bool IsCoupledPassiveTrain(const Vehicle *v)
+{
+	return v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::CoupledPassiveHead);
+}
+
+/**
+ * Get the heads of all passive trains in coupled combinations.
+ * @return The heads of the passive trains.
+ */
+std::vector<Train *> GetCoupledPassiveTrains()
+{
+	std::vector<Train *> result;
+	for (const auto &it : _train_couplings) {
+		Train *passive = Train::GetIfValid(it.second.passive_head);
+		if (passive != nullptr) result.push_back(passive);
+	}
+	return result;
+}
+
+/**
+ * Get the group of the passive train of a coupled combination.
+ * @param passive The head of the passive train.
+ * @return The group of the passive train.
+ */
+GroupID GetCoupledPassiveTrainGroup(const Train *passive)
+{
+	const Train *head = GetCouplingCombinationHead(passive);
+	const TrainCoupling *tc = head != nullptr ? GetTrainCoupling(head) : nullptr;
+	return tc != nullptr ? tc->passive_group : passive->group_id;
+}
+
+/**
+ * Set the group of the passive train of a coupled combination in its coupling record.
+ * @param passive The head of the passive train.
+ * @param group The new group.
+ */
+void SetCoupledPassiveTrainGroup(const Train *passive, GroupID group)
+{
+	const Train *head = GetCouplingCombinationHead(passive);
+	if (head == nullptr) return;
+	auto it = _train_couplings.find(head->index);
+	if (it != _train_couplings.end()) it->second.passive_group = group;
 }
 
 /** Split the combinations which reached a split order during this tick. */
