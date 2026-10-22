@@ -25,6 +25,8 @@
 
 #include "table/strings.h"
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 #include "strings_func.h"
 #include "town.h"
@@ -123,7 +125,7 @@ uint16_t GroupStatistics::GetNumEngines(EngineID engine) const
 		if (!v->IsEngineCountable()) continue;
 
 		GroupStatistics::CountEngine(v, 1);
-		if (v->IsPrimaryVehicle()) GroupStatistics::CountVehicle(v, 1);
+		if (IsPrimaryOrCoupledPassiveVehicle(v)) GroupStatistics::CountVehicle(v, 1);
 	}
 
 	for (const Company *c : Company::Iterate()) {
@@ -225,6 +227,10 @@ uint16_t GroupStatistics::GetNumEngines(EngineID engine) const
 			GroupStatistics::AddProfitLastYear(v);
 			if (v->economy_age > VEHICLE_PROFIT_MIN_AGE) GroupStatistics::VehicleReachedMinAge(v);
 		}
+	}
+	for (const Train *t : GetCoupledPassiveTrains()) {
+		GroupStatistics::AddProfitLastYear(t);
+		if (t->economy_age > VEHICLE_PROFIT_MIN_AGE) GroupStatistics::VehicleReachedMinAge(t);
 	}
 }
 
@@ -333,8 +339,8 @@ void IterateDescendantsOfGroup(GroupID id_top, F func)
 static void PropagateChildLiveryResetVehicleCache(const Group *g)
 {
 	/* Company colour data is indirectly cached. */
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
-		if (v->IsPrimaryVehicle() && (v->group_id == g->index || IsGroupIDDescendantOfGroupID(v->group_id, g->index, g->owner))) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
+		if (IsPrimaryOrCoupledPassiveVehicle(v) && (v->group_id == g->index || IsGroupIDDescendantOfGroupID(v->group_id, g->index, g->owner))) {
 			for (Vehicle *u = v; u != nullptr; u = u->Next()) {
 				u->colourmap = PAL_NONE;
 				u->InvalidateNewGRFCache();
@@ -752,7 +758,7 @@ CommandCost CmdCreateGroupFromList(DoCommandFlags flags, VehicleListIdentifier v
 
 		for (const Vehicle *v : list) {
 			/* Just try and don't care if some vehicles can't be added. */
-			if (v->owner == _current_company && v->IsPrimaryVehicle()) {
+			if (v->owner == _current_company && IsPrimaryOrCoupledPassiveVehicle(v)) {
 				AddVehicleToGroup(const_cast<Vehicle *>(v), g->index);
 			}
 		}
@@ -817,7 +823,7 @@ CommandCost CmdAddVehicleGroup(DoCommandFlags flags, GroupID group_id, VehicleID
 		if (g->owner != _current_company || g->vehicle_type != v->type) return CMD_ERROR;
 	}
 
-	if (v->owner != _current_company || !v->IsPrimaryVehicle()) return CMD_ERROR;
+	if (v->owner != _current_company || !IsPrimaryOrCoupledPassiveVehicle(v)) return CMD_ERROR;
 
 	if (new_g == v->group_id) {
 		return CommandCost();
@@ -844,8 +850,7 @@ CommandCost CmdAddVehicleGroup(DoCommandFlags flags, GroupID group_id, VehicleID
 		if (add_shared) {
 			/* Add vehicles in the shared order list as well. */
 			for (Vehicle *v2 = v->FirstShared(); v2 != nullptr; v2 = v2->NextShared()) {
-				/* The heads of passive trains in coupled combinations are not primary vehicles. */
-				if (v2->group_id != new_g && v2->IsPrimaryVehicle()) AddVehicleToGroup(v2, new_g);
+				if (v2->group_id != new_g && IsPrimaryOrCoupledPassiveVehicle(v2)) AddVehicleToGroup(v2, new_g);
 			}
 		}
 	}
@@ -932,7 +937,7 @@ CommandCost CmdAddSharedVehicleGroup(DoCommandFlags flags, GroupID id_g, Vehicle
 
 				/* For each shared vehicles add it to the group */
 				for (Vehicle *v2 = v->FirstShared(); v2 != nullptr; v2 = v2->NextShared()) {
-					if (v2->group_id != id_g && v2->IsPrimaryVehicle()) Command<Commands::AddVehicleToGroup>::Do(flags, id_g, v2->index, false);
+					if (v2->group_id != id_g && IsPrimaryOrCoupledPassiveVehicle(v2)) Command<Commands::AddVehicleToGroup>::Do(flags, id_g, v2->index, false);
 				}
 			}
 		}
@@ -964,6 +969,11 @@ CommandCost CmdRemoveAllVehiclesGroup(DoCommandFlags flags, GroupID group_id)
 
 				/* Add The Vehicle to the default group */
 				AddVehicleToGroup(v, DEFAULT_GROUP);
+			}
+		}
+		if (g->vehicle_type == VehicleType::Train) {
+			for (Train *t : GetCoupledPassiveTrains()) {
+				if (t->group_id == group_id) AddVehicleToGroup(t, DEFAULT_GROUP);
 			}
 		}
 	}
@@ -1063,9 +1073,13 @@ void SetTrainGroupID(Train *v, GroupID new_g)
 {
 	if (!Group::IsValidID(new_g) && !IsDefaultGroupID(new_g)) return;
 
-	assert(v->IsFrontEngine() || IsDefaultGroupID(new_g));
+	assert(v->IsFrontEngine() || v->flags.Test(VehicleRailFlag::CoupledPassiveHead) || IsDefaultGroupID(new_g));
+
+	if (v->flags.Test(VehicleRailFlag::CoupledPassiveHead)) SetCoupledPassiveTrainGroup(v, new_g);
 
 	for (Vehicle *u = v; u != nullptr; u = u->Next()) {
+		/* The passive train of a coupled combination keeps its own group. */
+		if (u != v && IsCoupledPassiveTrain(u)) break;
 		if (u->IsEngineCountable()) UpdateNumEngineGroup(u, u->group_id, new_g);
 
 		u->group_id = new_g;
@@ -1095,7 +1109,9 @@ void UpdateTrainGroupID(Train *v)
 	assert(v->IsFrontEngine() || v->IsFreeWagon());
 
 	GroupID new_g = v->IsFrontEngine() ? v->group_id : (GroupID)DEFAULT_GROUP;
-	for (Vehicle *u = v; u != nullptr; u = u->Next()) {
+	for (Train *u = v; u != nullptr; u = u->Next()) {
+		/* The passive train of a coupled combination keeps its own group. */
+		if (u != v && u->flags.Test(VehicleRailFlag::CoupledPassiveHead)) new_g = GetCoupledPassiveTrainGroup(u);
 		if (u->IsEngineCountable()) UpdateNumEngineGroup(u, u->group_id, new_g);
 
 		u->group_id = new_g;

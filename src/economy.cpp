@@ -71,6 +71,8 @@
 
 #include <ranges>
 
+#include "train_coupling.h"
+
 #include "safeguards.h"
 
 
@@ -479,7 +481,7 @@ void ChangeOwnershipOfCompanyItems(Owner old_owner, Owner new_owner)
 					}
 				} else {
 					if (v->IsEngineCountable()) GroupStatistics::CountEngine(v, -1);
-					if (v->IsPrimaryVehicle()) GroupStatistics::CountVehicle(v, -1);
+					if (IsPrimaryOrCoupledPassiveVehicle(v)) GroupStatistics::CountVehicle(v, -1);
 				}
 			}
 		}
@@ -541,7 +543,7 @@ void ChangeOwnershipOfCompanyItems(Owner old_owner, Owner new_owner)
 				if (v->IsEngineCountable()) {
 					GroupStatistics::CountEngine(v, 1);
 				}
-				if (v->IsPrimaryVehicle() && !HasBit(v->subtype, GVSF_VIRTUAL)) {
+				if (IsPrimaryOrCoupledPassiveVehicle(v) && !HasBit(v->subtype, GVSF_VIRTUAL)) {
 					GroupStatistics::CountVehicle(v, 1);
 					auto &unitidgen = new_company->freeunits[v->type];
 					v->unitnumber = unitidgen.UseID(unitidgen.NextID());
