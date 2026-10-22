@@ -423,6 +423,9 @@ public:
 
 		if (target != nullptr) target->okay = true;
 
+		/* The last signal before the platform of the train to couple to shows the coupling aspect. */
+		if (coupling_target && IsValidDiagDirection(Yapf().GetVehicle()->coupling_dir)) MarkCouplingApproachSignal(Yapf().GetVehicle());
+
 		if (Yapf().CanUseGlobalCache(*this->res_dest_node)) {
 			YapfNotifyTrackLayoutChange(INVALID_TILE, INVALID_TRACK);
 		}
