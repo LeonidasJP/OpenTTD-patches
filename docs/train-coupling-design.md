@@ -45,7 +45,8 @@ Een nieuw ordertype is niet handig, want er is nog maar één waarde vrij (`OT_E
 |---|---|
 | 8–9 | Koppelmodus: `Geen` / `Koppelen` / `Splitsen` |
 | 10 | Leider bij koppelen: `Wachtende trein leidt` / `Aankomende trein leidt` |
-| 11–15 | Gereserveerd |
+| 11–12 | Positie na splitsen (alleen bij `Splitsen`): `Eigen deel` / `Voorste deel` / `Achterste deel` (§4.4a) |
+| 13–15 | Gereserveerd |
 
 Het **partnerfilter** (alleen bij `Koppelen`) staat in `OrderExtraInfo`:
 
@@ -81,6 +82,7 @@ Een **combinatie** is nooit een geschikte partner, en een combinatie koppelt zel
 - Heeft de leider daar een `Splitsen`-order, dan worden **alle** stellen losgemaakt. Dat is nodig voor één gedeelde orderlijst.
 - Het splitsen gebeurt **bij aankomst, vóór het laden en lossen**. Daarna laadt en lost elk stel volgens zijn eigen order, en gaat verder met de volgende order uit zijn eigen lijst. Dit is ook de basis voor de juiste verdeling van reizigers (§7).
 - Voor het splitsen van een stel dat in het midden van de combinatie staat, zie §5.3.
+- Welk fysiek deel na het splitsen welke dienst rijdt, kan per `Splitsen`-order worden ingesteld (§4.4a).
 
 ### 3.4 Gespiegelde orders bij het passieve stel
 
@@ -139,7 +141,7 @@ Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toeg
 
 ### 3.7 JSON-export van orders
 
-*Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`) en `coupling-filter-id`. Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
+*Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`), `coupling-filter-id` en `coupling-split-position` (`front`/`rear`, alleen bij `split`; ontbreekt bij `Eigen deel`). Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
 
 ## 4. Fysiek koppelen en splitsen
 
@@ -174,6 +176,25 @@ Geïmplementeerd in fase 1 (`train_coupling.cpp`):
 2. Zijn groep wordt hersteld. Waren de identiteiten verwisseld, dan worden ze teruggewisseld.
 3. Daarna: groepsstatistiek, `ConsistChanged`, en de reserveringen voor beide treinen.
 4. De passieve trein krijgt een lege huidige order. Hoe hij daarna verdergaat (de `Splitsen`-order, laden), komt in fase 3.
+
+### 4.4a Positie na splitsen
+
+**Probleem:** standaard rijdt elk fysiek deel na het splitsen zijn eigen dienst verder. In een T-opstelling kan het deel dat moet keren dan vóór het deel staan dat rechtdoor moet. Geen van beide kan dan vertrekken.
+
+**Oplossing:** bij het splitsen worden zo nodig de diensten van de twee delen verwisseld, met `SwapTrainIdentities`. De fysieke treinstellen blijven staan waar ze staan; alleen de dienst wisselt van treinstel. Dat gebeurt in het echt ook.
+
+- **Instelling per `Splitsen`-order** (bits 11–12, alleen zichtbaar bij `Splitsen`): "Na splitsen verder als":
+  - `Eigen deel` (standaard): het deel waarmee de dienst heeft gekoppeld;
+  - `Voorste deel`: het deel dat voorop staat in de rijrichting bij aankomst op het splitsstation;
+  - `Achterste deel`: het andere deel.
+- **Welke order telt:** de `Splitsen`-order van de leider of van het passieve stel op dat station. Een stop zonder `Splitsen` telt niet mee. Hebben beide stellen een instelling die elkaar tegenspreekt (allebei voorop of allebei achterop), dan wint de **leider**. Staat alleen bij één stel een positie, dan krijgt het andere stel het overige deel.
+- **Splitsen:** `SplitCombination` wisselt de identiteiten als de leider na het splitsen op het tweede deel van de keten moet staan. Zonder instelling is dat precies als de identiteiten bij het koppelen waren verwisseld; dat is het oude gedrag. Het wisselen gebeurt vóór het vertrek of het verder laden van het afgesplitste stel. Daardoor horen `SplitOffLast`, de laadstatus en de vensters meteen bij de juiste dienst.
+- **Lading (§7.2b):** `GetCouplingSplitRoute` geeft het vervolgstation per **fysiek deel**. Bij een wissel worden die van de leider en het passieve stel dus omgedraaid. Zo laden de wagons onderweg al de reizigers voor de dienst die dat deel na het splitsen rijdt, en verhuist `ExchangeCargoBeforeSplit` de rest naar het goede deel.
+  - Voor de rijrichting telt de huidige rijrichting. Keert de combinatie tussen koppelen en splitsen, dan klopt de keuze bij het instappen niet. Op het splitsstation wordt het dan alsnog rechtgezet door het overstappen in de trein.
+- **Gevolgen:**
+  - De diensten wisselen van materieel, dus ook van capaciteit en eventueel van type. De motortellingen per groep volgen het materieel (`UpdateTrainGroupID`).
+  - Lading die op het splitsstation wordt gelost, wordt geboekt op de dienst die het deel na het splitsen rijdt.
+- **Handmatig splitsen** (het consolecommando `split_train`) gebruikt altijd `Eigen deel`.
 
 ## 5. Datamodel
 
@@ -414,7 +435,7 @@ Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het voo
 ## 9. GUI
 
 - **Orderscherm:**
-  - instellen van `Koppelen` of `Splitsen`, het partnerfilter en de leider. *Gebouwd:* deze opties staan in de dropdown "Order beheren" van een stationsorder, onder de stoplocatie. Een groep kies je in een tweede dropdown; een orderlijst kies je door op een trein te klikken. De orderregel toont bijvoorbeeld "[koppelen: elke trein, aankomende trein leidt]" of "[splitsen]";
+  - instellen van `Koppelen` of `Splitsen`, het partnerfilter en de leider. *Gebouwd:* deze opties staan in de dropdown "Order beheren" van een stationsorder, onder de stoplocatie. Een groep kies je in een tweede dropdown; een orderlijst kies je door op een trein te klikken. De orderregel toont bijvoorbeeld "[koppelen: elke trein, aankomende trein leidt]", "[splitsen]" of "[splitsen, verder als voorste deel]";
   - de depotvlag;
   - de gespiegelde orders, grijs weergegeven.
 - **Treinscherm:**
