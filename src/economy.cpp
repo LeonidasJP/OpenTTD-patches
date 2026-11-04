@@ -2293,8 +2293,8 @@ static void LoadUnloadVehicle(Vehicle *front)
 
 				uint loaded;
 				if (use_split_route) {
-					const StationID own_after = in_passive ? split_route.passive_after : split_route.leader_after;
-					const StationID other_after = in_passive ? split_route.leader_after : split_route.passive_after;
+					const StationID own_after = in_passive ? split_route.second_after : split_route.first_after;
+					const StationID other_after = in_passive ? split_route.first_after : split_route.second_after;
 					const bool other_has_room = unit_free_capacity[in_passive ? 0 : 1][v->cargo_type] > 0;
 					const CargoType cargo = v->cargo_type;
 					loaded = ged->cargo.LoadFiltered(cap_left, &v->cargo, unit_next_station.Get(v->cargo_type), v->GetCargoTile(), [&](const CargoPacket *cp) {

@@ -513,6 +513,37 @@ static void PrepareDepartureAfterSplit(Train *t)
 }
 
 /**
+ * Will the identity of the leading train be on the second part of the chain after a combination splits?
+ * The split orders can select the front or rear part, in the current driving direction. On a conflict the leading train wins.
+ * Without a selection both trains continue with their own part.
+ * @param head The head of the combination.
+ * @param leader_order The order of the leading train at the split station, or nullptr.
+ * @param passive_order The order of the passive train at the split station, or nullptr.
+ * @return True if the leading train continues with the second part.
+ */
+static bool IsLeaderOnSecondPartAfterSplit(const Train *head, const Order *leader_order, const Order *passive_order)
+{
+	const TrainCoupling *tc = GetTrainCoupling(head);
+	assert(tc != nullptr);
+
+	/* Is the second part in front, in the driving direction? */
+	const bool second_in_front = GetCargoUnitFront(head->GetMovingFront()) != head;
+	auto position = [](const Order *o) { return o != nullptr ? o->GetCouplingSplitPosition() : OrderSplitPosition::Own; };
+
+	switch (position(leader_order)) {
+		case OrderSplitPosition::Front: return second_in_front;
+		case OrderSplitPosition::Rear: return !second_in_front;
+		default: break;
+	}
+	switch (position(passive_order)) {
+		case OrderSplitPosition::Front: return !second_in_front;
+		case OrderSplitPosition::Rear: return second_in_front;
+		default: break;
+	}
+	return tc->identities_swapped;
+}
+
+/**
  * Check whether a combination can be split.
  * @param head The head of the combination.
  * @return Error or success.
@@ -530,12 +561,14 @@ CommandCost CheckCanSplitCombination(const Train *head)
 }
 
 /**
- * Split a combination back into the two original trains.
+ * Split a combination back into two trains.
  * @param head The head of the combination.
+ * @param leader_on_second Whether the leading train continues with the second part of the chain, see IsLeaderOnSecondPartAfterSplit.
+ *                         By default both trains continue with their own part.
  * @return The train which was the passive train.
  * @pre CheckCanSplitCombination(head).Succeeded()
  */
-Train *SplitCombination(Train *head)
+Train *SplitCombination(Train *head, std::optional<bool> leader_on_second)
 {
 	auto it = _train_couplings.find(head->index);
 	assert(it != _train_couplings.end());
@@ -558,7 +591,7 @@ Train *SplitCombination(Train *head)
 	second->group_id = tc.passive_group;
 
 	Train *passive = second;
-	if (tc.identities_swapped) {
+	if (leader_on_second.value_or(tc.identities_swapped)) {
 		CloseTrainHeadWindows(head);
 		SwapTrainIdentities(head, second);
 		passive = head;
@@ -1075,8 +1108,8 @@ void UpdateCouplingApproachFromOrders(Train *v)
 	}
 }
 
-/** Combinations which reached a split order during the current tick. */
-static std::vector<VehicleID> _pending_train_splits;
+/** Combinations which split after this tick, and whether the leading train then continues with the second part. */
+static std::vector<std::pair<VehicleID, bool>> _pending_train_splits;
 
 /**
  * A combination stopped at a station: split if the order of the leading or the passive train says so,
@@ -1120,7 +1153,10 @@ void OnCombinationEnteredStation(Train *head, StationID station)
 		}
 	}
 
-	if (split) _pending_train_splits.push_back(head->index);
+	if (split) {
+		const bool passive_splits = passive_order != nullptr && passive_order->IsType(OT_GOTO_STATION) && passive_order->GetDestination() == station;
+		_pending_train_splits.emplace_back(head->index, IsLeaderOnSecondPartAfterSplit(head, leader_order, passive_splits ? passive_order : nullptr));
+	}
 
 	/* The mirrored orders of the passive train follow the leading train. */
 	SetWindowDirty(WindowClass::VehicleOrders, passive->index);
@@ -1367,17 +1403,24 @@ CouplingSplitRoute GetCouplingSplitRoute(const Train *head)
 	if (route.split_station == StationID::Invalid()) return route;
 
 	const StationID split_station = route.split_station;
+	StationID leader_after = StationID::Invalid();
 	const Order *leader_split = find_order(head, leader_stopped, [&](const Order *o) { return o->GetDestination() == split_station; }).first;
-	if (leader_split != nullptr) route.leader_after = GetNextStationAfterOrder(head, leader_split);
+	if (leader_split != nullptr) leader_after = GetNextStationAfterOrder(head, leader_split);
 
+	StationID passive_after = StationID::Invalid();
 	const Order *passive_split = find_order(passive, passive_stopped, [&](const Order *o) { return o->GetDestination() == split_station; }).first;
 	if (passive_split != nullptr) {
-		route.passive_after = GetNextStationAfterOrder(passive, passive_split);
+		passive_after = GetNextStationAfterOrder(passive, passive_split);
 	} else {
 		/* The passive train has no stop at the split station, it continues to its next station. */
 		const Order *next = find_order(passive, passive_stopped, [](const Order *) { return true; }).first;
-		if (next != nullptr) route.passive_after = next->GetDestination().ToStationID();
+		if (next != nullptr) passive_after = next->GetDestination().ToStationID();
 	}
+
+	/* The cargo goes with the part of the chain, which might continue as the other train. */
+	const bool leader_on_second = IsLeaderOnSecondPartAfterSplit(head, leader_split, passive_split);
+	route.first_after = leader_on_second ? passive_after : leader_after;
+	route.second_after = leader_on_second ? leader_after : passive_after;
 	return route;
 }
 
@@ -1433,8 +1476,8 @@ void ExchangeCargoBeforeSplit(Train *head)
 	for (Train *from_unit : { static_cast<Train *>(head), passive }) {
 		const bool from_passive = (from_unit == passive);
 		Train *to_unit = from_passive ? head : passive;
-		const StationID own_after = from_passive ? route.passive_after : route.leader_after;
-		const StationID other_after = from_passive ? route.leader_after : route.passive_after;
+		const StationID own_after = from_passive ? route.second_after : route.first_after;
+		const StationID other_after = from_passive ? route.first_after : route.second_after;
 		const Vehicle *from_end = GetCargoUnitEnd(from_unit);
 		const Vehicle *to_end = GetCargoUnitEnd(to_unit);
 
@@ -1493,9 +1536,9 @@ static void ProcessPendingTrainSplits()
 {
 	if (_pending_train_splits.empty()) return;
 
-	std::vector<VehicleID> pending;
+	std::vector<std::pair<VehicleID, bool>> pending;
 	pending.swap(_pending_train_splits);
-	for (VehicleID id : pending) {
+	for (const auto &[id, leader_on_second] : pending) {
 		Train *head = Train::GetIfValid(id);
 		if (head == nullptr || !IsTrainCoupled(head)) continue;
 		head->cur_speed = 0;
@@ -1507,7 +1550,7 @@ static void ProcessPendingTrainSplits()
 		}
 		/* The passive train stages its cargo when it starts loading after the split. */
 		CouplingSplitStagingScope staging(true);
-		SplitCombination(head);
+		SplitCombination(head, leader_on_second);
 	}
 }
 

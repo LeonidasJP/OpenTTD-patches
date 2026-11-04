@@ -528,8 +528,9 @@ static bool ConOrdersJson(std::span<std::string_view> argv)
 static bool ConCouplingOrder(std::span<std::string_view> argv)
 {
 	if (argv.size() < 4) {
-		IConsolePrint(CC_HELP, "Set the coupling action of a station order. Usage: 'coupling_order <train number> <order number> <none|couple|split> [arriving|waiting] [any|group <group id>|orderlist <train number>]'.");
+		IConsolePrint(CC_HELP, "Set the coupling action of a station order. Usage: 'coupling_order <train number> <order number> <none|couple|split> [arriving|waiting] [any|group <group id>|orderlist <train number>] [own|front|rear]'.");
 		IConsolePrint(CC_HELP, "Order numbers start at 1. 'arriving' or 'waiting' selects which train leads when coupling, the default is the waiting train.");
+		IConsolePrint(CC_HELP, "'own', 'front' or 'rear' selects which part the train continues with after splitting, the default is its own part.");
 		return true;
 	}
 
@@ -555,8 +556,15 @@ static bool ConCouplingOrder(std::span<std::string_view> argv)
 	bool arriving_leads = false;
 	OrderCouplingFilter filter = OrderCouplingFilter::Any;
 	uint16_t filter_id = 0;
+	OrderSplitPosition split_position = OrderSplitPosition::Own;
 	for (size_t i = 4; i < argv.size(); i++) {
-		if (argv[i] == "arriving") {
+		if (argv[i] == "own") {
+			split_position = OrderSplitPosition::Own;
+		} else if (argv[i] == "front") {
+			split_position = OrderSplitPosition::Front;
+		} else if (argv[i] == "rear") {
+			split_position = OrderSplitPosition::Rear;
+		} else if (argv[i] == "arriving") {
 			arriving_leads = true;
 		} else if (argv[i] == "waiting") {
 			arriving_leads = false;
@@ -594,6 +602,8 @@ static bool ConCouplingOrder(std::span<std::string_view> argv)
 		if (!modify(MOF_COUPLING_LEADER, arriving_leads ? 1 : 0)) return true;
 		if (!modify(MOF_COUPLING_FILTER, to_underlying(filter))) return true;
 		if (filter != OrderCouplingFilter::Any && !modify(MOF_COUPLING_FILTER_ID, filter_id)) return true;
+	} else if (mode == OrderCouplingMode::Split) {
+		if (!modify(MOF_COUPLING_SPLIT_POSITION, to_underlying(split_position))) return true;
 	}
 	IConsolePrint(CC_DEFAULT, "coupling_order: done");
 	return true;
@@ -967,8 +977,9 @@ static bool ConListTrainCouplings(std::span<std::string_view> argv)
 				} else if (o->IsType(OT_GOTO_DEPOT)) {
 					dest = fmt::format("depot {}", o->GetDestination().value);
 				}
-				IConsolePrint(CC_DEFAULT, "  order {}: type {} {} flags 0x{:X} stop location {} coupling {} leader {} filter {}/{}{}", i + 1, o->GetType(), dest, o->GetRawFlags(), to_underlying(o->GetStopLocation()),
-						to_underlying(o->GetCouplingMode()), o->IsCouplingArrivingLeads() ? "arriving" : "waiting", to_underlying(o->GetCouplingFilter()), o->GetCouplingFilterID(), i == t->cur_real_order_index ? " <- current" : "");
+				IConsolePrint(CC_DEFAULT, "  order {}: type {} {} flags 0x{:X} stop location {} coupling {} leader {} filter {}/{} split position {}{}", i + 1, o->GetType(), dest, o->GetRawFlags(), to_underlying(o->GetStopLocation()),
+						to_underlying(o->GetCouplingMode()), o->IsCouplingArrivingLeads() ? "arriving" : "waiting", to_underlying(o->GetCouplingFilter()), o->GetCouplingFilterID(),
+						to_underlying(o->GetCouplingSplitPosition()), i == t->cur_real_order_index ? " <- current" : "");
 				i++;
 			}
 		}
@@ -1089,13 +1100,13 @@ static bool ConCouplingCargo(std::span<std::string_view> argv)
 		return true;
 	}
 	const CouplingSplitRoute route = GetCouplingSplitRoute(v);
-	IConsolePrint(CC_DEFAULT, "Combination {}: split at {}, leader then {}, passive then {}, valid {}", v->unitnumber,
-			route.split_station.base(), route.leader_after.base(), route.passive_after.base(), route.IsValid());
+	IConsolePrint(CC_DEFAULT, "Combination {}: split at {}, first part then {}, second part then {}, valid {}", v->unitnumber,
+			route.split_station.base(), route.first_after.base(), route.second_after.base(), route.IsValid());
 	if (!route.IsValid()) return true;
 	const Train *passive = GetCoupledPassiveHead(v);
 	for (const Vehicle *unit : { static_cast<const Vehicle *>(v), static_cast<const Vehicle *>(passive) }) {
-		const StationID own_after = (unit == passive) ? route.passive_after : route.leader_after;
-		const StationID other_after = (unit == passive) ? route.leader_after : route.passive_after;
+		const StationID own_after = (unit == passive) ? route.second_after : route.first_after;
+		const StationID other_after = (unit == passive) ? route.first_after : route.second_after;
 		uint own = 0, other = 0, elsewhere = 0, capacity = 0;
 		for (const Vehicle *u = unit; u != GetCargoUnitEnd(unit); u = u->Next()) {
 			capacity += u->cargo_cap;
