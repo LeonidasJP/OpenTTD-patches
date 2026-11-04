@@ -643,7 +643,7 @@ void VehicleCargoList::AgeCargo()
  * @param current_tile Current tile the cargo handling is happening on.
  * @return \c true iff any cargo will be unloaded.
  */
-bool VehicleCargoList::Stage(bool accepted, StationID current_station, std::span<const StationID> next_station, OrderUnloadType unload_type, const GoodsEntry *ge, CargoType cargo, CargoPayment *payment, TileIndex current_tile)
+bool VehicleCargoList::Stage(bool accepted, StationID current_station, std::span<const StationID> next_station, OrderUnloadType unload_type, const GoodsEntry *ge, CargoType cargo, CargoPayment *payment, TileIndex current_tile, bool deterministic_via)
 {
 	this->AssertCountConsistency();
 	dbg_assert(this->action_counts[MoveToAction::Load] == 0);
@@ -705,6 +705,9 @@ bool VehicleCargoList::Stage(bool accepted, StationID current_station, std::span
 			FlowStatMap::const_iterator flow_it(flows.find(cp->first_station));
 			if (flow_it == flows.end()) {
 				cargo_next = StationID::Invalid();
+			} else if (deterministic_via) {
+				/* The next hop was already chosen when the cargo was loaded, see GetCouplingSplitVia. */
+				cargo_next = flow_it->GetViaDeterministic(cp->GetRouteHash(current_station), restricted);
 			} else {
 				cargo_next = flow_it->GetViaWithRestricted(restricted);
 			}
@@ -837,6 +840,33 @@ uint VehicleCargoList::Shift(uint max_move, VehicleCargoList *dest)
 	max_move = std::min(this->count, max_move);
 	this->PopCargo(CargoShift(this, dest, max_move));
 	return max_move;
+}
+
+/**
+ * Shifts the cargo packets which pass a filter from this list to another one. All cargo must be kept (not staged).
+ * @param max_move Maximum amount of cargo to move.
+ * @param dest Destination to move the cargo to.
+ * @param filter Filter of the packets to move.
+ * @return Amount of cargo actually moved.
+ */
+uint VehicleCargoList::ShiftFiltered(uint max_move, VehicleCargoList *dest, const CargoPacketFilter &filter)
+{
+	max_move = std::min(this->count, max_move);
+	CargoShift action(this, dest, max_move);
+	Iterator it(this->packets.begin());
+	while (it != this->packets.end() && action.MaxMove() > 0) {
+		CargoPacket *cp = *it;
+		if (!filter(cp)) {
+			++it;
+			continue;
+		}
+		if (action(cp)) {
+			it = this->packets.erase(it);
+		} else {
+			break;
+		}
+	}
+	return max_move - action.MaxMove();
 }
 
 /**
@@ -1144,6 +1174,58 @@ uint StationCargoList::Reserve(uint max_move, VehicleCargoList *dest, std::span<
  *       modes of loading are exclusive, though. If cargo is reserved we don't
  *       need to load unreserved cargo.
  */
+/**
+ * Shifts cargo which passes a filter from the packet list for a specific next hop, and applies some action to it.
+ * @param action Action instance to be applied.
+ * @param next Next hop the cargo wants to visit.
+ * @param filter Filter of the packets to apply the action to.
+ * @return True if all packets which pass the filter have been handled, false otherwise.
+ */
+template <class Taction>
+bool StationCargoList::ShiftCargoFiltered(Taction &action, StationID next, const CargoPacketFilter &filter)
+{
+	for (Iterator it = this->packets.lower_bound(next); it != this->packets.end() && it.GetKey() == next;) {
+		if (action.MaxMove() == 0) return false;
+		CargoPacket *cp = *it;
+		if (!filter(cp)) {
+			++it;
+			continue;
+		}
+		if (action(cp)) {
+			it = this->packets.erase(it);
+		} else {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Loads cargo which passes a filter onto a vehicle, like Load. Reserved cargo is loaded first, without the filter.
+ * @param max_move Amount of cargo to load.
+ * @param dest Vehicle cargo list where the cargo resides.
+ * @param next_station Next station(s) the loading vehicle will visit.
+ * @param current_tile Current tile the cargo handling is happening on.
+ * @param filter Filter of the packets which may be loaded.
+ * @return Amount of cargo actually loaded.
+ */
+uint StationCargoList::LoadFiltered(uint max_move, VehicleCargoList *dest, std::span<const StationID> next_station, TileIndex current_tile, const CargoPacketFilter &filter)
+{
+	uint move = std::min(dest->ActionCount(VehicleCargoList::MoveToAction::Load), max_move);
+	if (move > 0) {
+		this->reserved_count -= move;
+		dest->Reassign<VehicleCargoList::MoveToAction::Load, VehicleCargoList::MoveToAction::Keep>(move);
+		return move;
+	}
+	CargoLoad action{this, dest, max_move, current_tile};
+	for (StationID st : next_station) {
+		this->ShiftCargoFiltered(action, st, filter);
+		if (action.MaxMove() == 0) break;
+	}
+	if (action.MaxMove() > 0) this->ShiftCargoFiltered(action, StationID::Invalid(), filter);
+	return max_move - action.MaxMove();
+}
+
 uint StationCargoList::Load(uint max_move, VehicleCargoList *dest, std::span<const StationID> next_station, TileIndex current_tile)
 {
 	uint move = std::min(dest->ActionCount(VehicleCargoList::MoveToAction::Load), max_move);

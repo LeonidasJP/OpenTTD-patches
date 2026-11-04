@@ -303,6 +303,7 @@ enum NewSignalCtrlFlags {
 	NSCF_RESTRICTEDSIG          = 2,                          ///< Custom signal sprite flag enabled for restricted signals.
 	NSCF_RECOLOUR_ENABLED       = 3,                          ///< Recolour sprites enabled
 	NSCF_NOENTRYSIG             = 4,                          ///< Custom signal sprites enabled for no-entry signals.
+	NSCF_COUPLINGSIG            = 5,                          ///< Custom signal sprite flag enabled for the coupling aspect.
 };
 
 enum {

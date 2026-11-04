@@ -24,6 +24,7 @@
 #include "sl/saveload_common_type.h"
 #include "3rdparty/cpp-ring-buffer/ring_buffer.hpp"
 #include "3rdparty/cpp-btree/btree_map.h"
+#include <functional>
 
 struct CargoPayment;
 
@@ -31,6 +32,9 @@ struct CargoPayment;
 struct CargoPacketIDTag : public PoolIDTraits<uint32_t, 0xFFF000, 0xFFFFFF> {};
 using CargoPacketID = PoolID<CargoPacketIDTag>;
 struct CargoPacket;
+
+/** Filter for cargo packets in cargo movements. */
+using CargoPacketFilter = std::function<bool(const CargoPacket *)>;
 
 /** Type of the pool for cargo packets for a little over 16 million packets. */
 using CargoPacketPool = Pool<CargoPacket, CargoPacketID, 1024, PoolType::Normal, true>;
@@ -226,6 +230,23 @@ public:
 	inline StationID GetFirstStation() const
 	{
 		return this->first_station;
+	}
+
+	/**
+	 * Get a hash of this packet and a station, which replaces the random choice of the next hop at that station
+	 * when the routing has to be known in advance, see GetCouplingSplitVia.
+	 * @param station The station at which the next hop is chosen.
+	 * @return The hash.
+	 */
+	inline uint32_t GetRouteHash(StationID station) const
+	{
+		uint32_t hash = this->index.base() * 0x9E3779B1U;
+		hash ^= (this->first_station.base() + 0x7F4A7C15U) * 0x85EBCA6BU;
+		hash ^= (station.base() + 0x165667B1U) * 0xC2B2AE35U;
+		hash ^= hash >> 16;
+		hash *= 0x7FEB352DU;
+		hash ^= hash >> 15;
+		return hash;
 	}
 
 	/**
@@ -512,7 +533,7 @@ public:
 
 	void InvalidateCache();
 
-	bool Stage(bool accepted, StationID current_station, std::span<const StationID> next_station, OrderUnloadType unload_type, const GoodsEntry *ge, CargoType cargo, CargoPayment *payment, TileIndex current_tile);
+	bool Stage(bool accepted, StationID current_station, std::span<const StationID> next_station, OrderUnloadType unload_type, const GoodsEntry *ge, CargoType cargo, CargoPayment *payment, TileIndex current_tile, bool deterministic_via = false);
 
 	/**
 	 * Marks all cargo in the vehicle as to be kept. This is mostly useful for
@@ -536,6 +557,7 @@ public:
 	uint Return(uint max_move, StationCargoList *dest, StationID next_station, TileIndex current_tile);
 	uint Unload(uint max_move, StationCargoList *dest, CargoType cargo, CargoPayment *payment, TileIndex current_tile);
 	uint Shift(uint max_move, VehicleCargoList *dest);
+	uint ShiftFiltered(uint max_move, VehicleCargoList *dest, const CargoPacketFilter &filter);
 	uint Truncate(uint max_move = UINT_MAX);
 	uint Reroute(uint max_move, VehicleCargoList *dest, StationID avoid, StationID avoid2, const GoodsEntry *ge);
 	uint RerouteFromSource(uint max_move, VehicleCargoList *dest, StationID source, StationID avoid, StationID avoid2, const GoodsEntry *ge);
@@ -591,6 +613,9 @@ public:
 
 	template <class Taction>
 	uint ShiftCargo(Taction action, std::span<const StationID> next, bool include_invalid);
+
+	template <class Taction>
+	bool ShiftCargoFiltered(Taction &action, StationID next, const CargoPacketFilter &filter);
 
 	template <class Taction>
 	bool ShiftCargoFromSource(Taction &action, StationID source, StationID next);
@@ -660,6 +685,7 @@ public:
 
 	uint Reserve(uint max_move, VehicleCargoList *dest, std::span<const StationID> next, TileIndex current_tile);
 	uint Load(uint max_move, VehicleCargoList *dest, std::span<const StationID> next, TileIndex current_tile);
+	uint LoadFiltered(uint max_move, VehicleCargoList *dest, std::span<const StationID> next, TileIndex current_tile, const CargoPacketFilter &filter);
 	uint Truncate(uint max_move = UINT_MAX, StationCargoAmountMap *cargo_per_source = nullptr);
 	uint Reroute(uint max_move, StationCargoList *dest, StationID avoid, StationID avoid2, const GoodsEntry *ge);
 	uint RerouteFromSource(uint max_move, StationCargoList *dest, StationID source, StationID avoid, StationID avoid2, const GoodsEntry *ge);

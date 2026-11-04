@@ -17,6 +17,8 @@
 #include "../../viewport_func.h"
 #include "../../newgrf_station.h"
 #include "../../tracerestrict.h"
+#include "../../train_coupling.h"
+#include "../../vehicle_func.h"
 #include "../../debug.h"
 #include "../../misc/dbg_helpers.h"
 
@@ -89,8 +91,36 @@ private:
 	Trackdir res_fail_td;      ///< The trackdir where the reservation failed
 	TileIndex origin_tile;     ///< Tile our reservation will originate from
 
+	/**
+	 * Is the tile part of the platform of the train to which our train drives to couple?
+	 * @param tile The tile to check.
+	 * @return True if our train couples on the platform of this tile.
+	 */
+	bool IsCouplingPlatformTile(TileIndex tile)
+	{
+		const Train *v = Yapf().GetVehicle();
+		return v->coupling_target != VehicleID::Invalid() && IsCouplingApproachPlatformTile(v, tile);
+	}
+
+	/**
+	 * Is the coupling target of our train on this tile?
+	 * @param tile The tile to check.
+	 * @return True if a vehicle of the coupling target is on the tile.
+	 */
+	bool IsCouplingTargetOnTile(TileIndex tile)
+	{
+		const VehicleID target = Yapf().GetVehicle()->coupling_target;
+		return HasVehicleOnTile<VehicleType::Train>(tile, [target](const Train *u) { return u->First()->index == target; });
+	}
+
 	bool FindSafePositionProc(TileIndex tile, Trackdir td)
 	{
+		if (IsRailStationTile(tile) && this->IsCouplingPlatformTile(tile)) {
+			/* The reservation into the platform ends directly behind the train to couple to. */
+			this->res_dest_tile = tile;
+			this->res_dest_td = td;
+			return false;
+		}
 		if (IsSafeWaitingPosition(Yapf().GetVehicle(), tile, td, true, !TrackFollower::Allow90degTurns())) {
 			this->res_dest_tile = tile;
 			this->res_dest_td = td;
@@ -109,6 +139,47 @@ private:
 	{
 		TileIndex     start = tile;
 		TileIndexDiff diff = TileOffsByDiagDir(dir);
+
+		if (this->IsCouplingPlatformTile(start)) {
+			/* The platform is reserved starting at the far end, in the reverse direction of travel.
+			 * When coupling, only reserve the part from the platform entry up to the train to couple to,
+			 * the remainder is reserved by that train. */
+			Train *v = const_cast<Train *>(Yapf().GetVehicle());
+
+			/* Only pass the signal into the platform with at most the coupling speed. */
+			if (v->cur_speed > _settings_game.vehicle.train_coupling_speed) return false;
+
+			/* Only one train may drive into the platform to couple to the waiting train. */
+			const Train *target = Train::GetIfValid(v->coupling_target);
+			if (target != nullptr && IsTrainCouplingTargetOfOtherTrain(target, v, true)) return false;
+
+			TileIndex entry = start;
+			for (TileIndex t = TileAdd(start, diff); IsCompatibleTrainStationTile(t, start) && t != this->origin_tile; t = TileAdd(t, diff)) entry = t;
+
+			const DiagDirection travel_dir = ReverseDiagDir(dir);
+			const TileIndexDiff forward = TileOffsByDiagDir(travel_dir);
+			std::vector<TileIndex> reserved_tiles;
+			for (TileIndex t = entry; IsCompatibleTrainStationTile(t, start); t = TileAdd(t, forward)) {
+				if (HasStationReservation(t)) {
+					if (this->IsCouplingTargetOnTile(t)) break;
+
+					/* The train to couple to may have reserved the complete platform when it arrived. */
+					if (GetTrainForReservation(t, GetRailStationTrack(t)) == Train::GetIfValid(v->coupling_target)) continue;
+
+					/* Reserved by another train, undo our part of the platform reservation. */
+					for (TileIndex u : reserved_tiles) {
+						SetRailStationReservation(u, false);
+						MarkTileDirtyByTile(u, VMDF_NOT_MAP_MODE);
+					}
+					return false;
+				}
+				SetRailStationReservation(t, true);
+				MarkTileDirtyByTile(t, VMDF_NOT_MAP_MODE);
+				reserved_tiles.push_back(t);
+			}
+			v->coupling_dir = travel_dir;
+			return true;
+		}
 
 		do {
 			if (HasStationReservation(tile)) return false;
@@ -133,11 +204,14 @@ private:
 	bool ReserveSingleTrack(TileIndex tile, Trackdir td)
 	{
 		if (IsRailStationTile(tile)) {
+			const bool coupling = this->IsCouplingPlatformTile(tile);
 			if (!ReserveRailStationPlatform(tile, TrackdirToExitdir(ReverseTrackdir(td)))) {
 				/* Platform could not be reserved, undo. */
 				this->res_fail_tile = tile;
 				this->res_fail_td = td;
 			}
+			/* The reservation into the platform of the train to couple to is the end of the path. */
+			if (coupling) return false;
 		} else {
 			if (!TryReserveRailTrackdir(Yapf().GetVehicle(), tile, td)) {
 				/* Tile couldn't be reserved, undo. */
@@ -167,8 +241,19 @@ private:
 		if (IsRailStationTile(tile)) {
 			TileIndex     start = tile;
 			TileIndexDiff diff = TileOffsByDiagDir(TrackdirToExitdir(ReverseTrackdir(td)));
+			const bool coupling = this->IsCouplingPlatformTile(start);
+			bool passed_coupling_target = false;
 			while ((tile != this->res_fail_tile || td != this->res_fail_td) && IsCompatibleTrainStationTile(tile, start)) {
-				SetRailStationReservation(tile, false);
+				if (coupling) {
+					/* When coupling, only the part of the platform between the entry and the train to couple to is ours. */
+					if (this->IsCouplingTargetOnTile(tile)) {
+						passed_coupling_target = true;
+					} else if (passed_coupling_target) {
+						SetRailStationReservation(tile, false);
+					}
+				} else {
+					SetRailStationReservation(tile, false);
+				}
 				tile = TileAdd(tile, diff);
 			}
 		} else if (tile != this->res_fail_tile || td != this->res_fail_td) {
@@ -236,7 +321,8 @@ public:
 		/* Don't bother if the target is reserved. */
 		PBSWaitingPositionRestrictedSignalState restricted_signal_state;
 		restricted_signal_state.defer_test_if_slot_conditional = true;
-		if (!IsWaitingPositionFree(Yapf().GetVehicle(), this->res_dest_tile, this->res_dest_td, false, &restricted_signal_state)) return false;
+		const bool coupling_target = IsRailStationTile(this->res_dest_tile) && this->IsCouplingPlatformTile(this->res_dest_tile);
+		if (!coupling_target && !IsWaitingPositionFree(Yapf().GetVehicle(), this->res_dest_tile, this->res_dest_td, false, &restricted_signal_state)) return false;
 
 		/* The temporary slot state only needs to be pushed to the stack (i.e. activated) on first use */
 		static TraceRestrictSlotTemporaryState temporary_slot_state;
@@ -336,6 +422,9 @@ public:
 		restricted_signal_state.TraceRestrictExecuteResEndSlot(Yapf().GetVehicle());
 
 		if (target != nullptr) target->okay = true;
+
+		/* The last signal before the platform of the train to couple to shows the coupling aspect. */
+		if (coupling_target && IsValidDiagDirection(Yapf().GetVehicle()->coupling_dir)) MarkCouplingApproachSignal(Yapf().GetVehicle());
 
 		if (Yapf().CanUseGlobalCache(*this->res_dest_node)) {
 			YapfNotifyTrackLayoutChange(INVALID_TILE, INVALID_TRACK);

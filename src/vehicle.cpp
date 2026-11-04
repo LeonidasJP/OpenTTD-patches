@@ -67,6 +67,7 @@
 #include "event_logs.h"
 #include "misc_cmd.h"
 #include "train_cmd.h"
+#include "train_coupling.h"
 #include "vehicle_cmd.h"
 #include "tile_cmd.h"
 #include "script/api/script_event_types.hpp"
@@ -1168,7 +1169,7 @@ void Vehicle::PreDestructor()
 
 	if (this->IsEngineCountable()) {
 		GroupStatistics::CountEngine(this, -1);
-		if (this->IsPrimaryVehicle()) GroupStatistics::CountVehicle(this, -1);
+		if (IsPrimaryOrCoupledPassiveVehicle(this)) GroupStatistics::CountVehicle(this, -1);
 		GroupStatistics::UpdateAutoreplace(this->owner);
 
 		if (this->owner == _local_company) InvalidateAutoreplaceWindow(this->engine_type, this->group_id);
@@ -1204,6 +1205,7 @@ void Vehicle::PreDestructor()
 		TraceRestrictRemoveVehicleFromAllSlots(this->index);
 		this->vehicle_flags.Reset(VehicleFlag::HaveSlot);
 	}
+	if (this->type == VehicleType::Train) OnTrainCouplingVehicleDeleted(Train::From(this));
 	if (this->type == VehicleType::Train && Train::From(this)->flags.Test(VehicleRailFlag::PendingSpeedRestriction)) {
 		_pending_speed_restriction_change_map.erase(this->index);
 		Train::From(this)->flags.Reset(VehicleRailFlag::PendingSpeedRestriction);
@@ -1280,6 +1282,7 @@ Vehicle::~Vehicle()
 void Vehicle::PreCleanPool()
 {
 	_pending_speed_restriction_change_map.clear();
+	_train_couplings.clear();
 }
 
 /**
@@ -1289,7 +1292,7 @@ void Vehicle::PreCleanPool()
 static void VehicleEnteredDepotThisTick(Vehicle *v)
 {
 	/* Template Replacement Setup stuff */
-	if (GetTemplateIDByGroupIDRecursive(v->group_id) != INVALID_TEMPLATE) {
+	if (GetTemplateIDByGroupIDRecursive(v->group_id) != INVALID_TEMPLATE && !(v->type == VehicleType::Train && IsTrainCoupled(Train::From(v)))) {
 		/* Vehicle should stop in the depot if it was in 'stopping' state */
 		_vehicles_to_templatereplace.insert(v->index);
 	}
@@ -1680,6 +1683,9 @@ void CallVehicleTicks()
 		}
 	}
 	RecordSyncEvent(NSRE_VEH_TRAIN);
+	ProcessPendingTrainCouplings();
+	extern void ProcessTrainLoadingConsoleWatches();
+	ProcessTrainLoadingConsoleWatches();
 	{
 		PerformanceMeasurer framerate(PerformanceElement::GameLoopRoadVehicles);
 		for (RoadVehicle *front : _tick_road_veh_front_cache) {
@@ -2538,7 +2544,7 @@ void EconomyAgeVehicle(Vehicle *v)
 
 	if (v->economy_age < EconTime::MAX_DATE.AsDelta()) {
 		v->economy_age++;
-		if (v->IsPrimaryVehicle() && v->economy_age == VEHICLE_PROFIT_MIN_AGE + 1) GroupStatistics::VehicleReachedMinAge(v);
+		if (IsPrimaryOrCoupledPassiveVehicle(v) && v->economy_age == VEHICLE_PROFIT_MIN_AGE + 1) GroupStatistics::VehicleReachedMinAge(v);
 	}
 }
 
@@ -2818,6 +2824,13 @@ void VehicleEnterDepot(Vehicle *v)
 
 			/* Clear unbunching data. */
 			v->ResetDepotUnbunching();
+
+			/* Announce that a coupled combination stopped in a depot, which was not allowed by the order. */
+			if (v->owner == _local_company && v->type == VehicleType::Train && IsTrainCoupled(Train::From(v)) &&
+					v->current_order.GetDepotOrderType().Test(OrderDepotTypeFlag::PartOfOrders) &&
+					!v->current_order.GetDepotExtraFlags().Test(OrderDepotExtraFlag::CoupledAllowed)) {
+				AddVehicleAdviceNewsItem(AdviceType::VehicleWaiting, GetEncodedString(STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT, v->index), v->index);
+			}
 
 			/* Announce that the vehicle is waiting to players and AIs. */
 			if (v->owner == _local_company) {
@@ -3379,7 +3392,8 @@ void Vehicle::DeleteUnreachedImplicitOrders()
  */
 static void VehicleIncreaseStats(const Vehicle *front)
 {
-	for (const Vehicle *v = front; v != nullptr; v = v->Next()) {
+	const Vehicle *unit_end = GetCargoUnitEnd(front);
+	for (const Vehicle *v = front; v != unit_end; v = v->Next()) {
 		StationID last_loading_station = front->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? v->last_loading_station : front->last_loading_station;
 		StateTicks loading_tick = front->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? v->last_loading_tick : front->last_loading_tick;
 		if (v->refit_cap > 0 &&
@@ -3558,13 +3572,104 @@ CargoTypes Vehicle::GetLastLoadingStationValidCargoMask() const
 		return (this->last_loading_station != StationID::Invalid()) ? ALL_CARGOTYPES : CargoTypes{};
 	} else {
 		CargoTypes cargo_mask{};
-		for (const Vehicle *u = this; u != nullptr; u = u->Next()) {
+		const Vehicle *unit_end = GetCargoUnitEnd(this);
+		for (const Vehicle *u = this; u != unit_end; u = u->Next()) {
 			if (u->cargo_type < NUM_CARGO && u->last_loading_station != StationID::Invalid()) {
 				cargo_mask.Set(u->cargo_type);
 			}
 		}
 		return cargo_mask;
 	}
+}
+
+/**
+ * Update the links and the last loading stations of a cargo unit which leaves a station, see GetCargoUnitEnd.
+ * @param unit The front of the cargo unit, its current order is the loading order.
+ */
+static void UpdateCargoUnitLeavingStation(Vehicle *unit)
+{
+	const Vehicle *unit_end = GetCargoUnitEnd(unit);
+
+	CargoTypes cargoes_can_load_unload = unit->current_order.FilterLoadUnloadTypeCargoMask([&](const Order *o, CargoType cargo) {
+		return (o->GetCargoLoadType(cargo) != OrderLoadType::NoLoad) || (o->GetCargoUnloadType(cargo) != OrderUnloadType::NoUnload);
+	});
+	CargoTypes has_cargo_mask = unit->GetLastLoadingStationValidCargoMask();
+	CargoTypes cargoes_can_leave_with_cargo = FilterCargoMask([&](CargoType cargo) {
+		return unit->current_order.CanLeaveWithCargo(has_cargo_mask.Test(cargo), cargo);
+	}, cargoes_can_load_unload);
+
+	if (cargoes_can_load_unload.Any()) {
+		if (cargoes_can_leave_with_cargo.Any()) {
+			/* Refresh next hop stats to make sure we've done that at least once
+			 * during the stop and that refit_cap == cargo_cap for each vehicle in
+			 * the consist. */
+			unit->ResetRefitCaps();
+			LinkRefresher::Run(unit, true, false, cargoes_can_leave_with_cargo);
+		}
+
+		if (cargoes_can_leave_with_cargo == ALL_CARGOTYPES) {
+			/* can leave with all cargoes */
+
+			/* if the vehicle could load here or could stop with cargo loaded set the last loading station */
+			unit->last_loading_station = unit->last_station_visited;
+			unit->last_loading_tick = _state_ticks;
+			unit->vehicle_flags.Reset(VehicleFlag::LastLoadStationSeparate);
+		} else if (cargoes_can_leave_with_cargo.None()) {
+			/* can leave with no cargoes */
+
+			/* if the vehicle couldn't load and had to unload or transfer everything
+			 * set the last loading station to invalid as it will leave empty. */
+			unit->last_loading_station = StationID::Invalid();
+			unit->vehicle_flags.Reset(VehicleFlag::LastLoadStationSeparate);
+		} else {
+			/* mix of cargoes loadable or could not leave with all cargoes */
+
+			/* NB: this is saved here as we overwrite it on the first iteration of the loop below */
+			StationID head_last_loading_station = unit->last_loading_station;
+			StateTicks head_last_loading_tick = unit->last_loading_tick;
+			for (Vehicle *u = unit; u != unit_end; u = u->Next()) {
+				StationID last_loading_station = unit->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? u->last_loading_station : head_last_loading_station;
+				StateTicks last_loading_tick = unit->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? u->last_loading_tick : head_last_loading_tick;
+				if (u->cargo_type < NUM_CARGO && cargoes_can_load_unload.Test(u->cargo_type)) {
+					if (cargoes_can_leave_with_cargo.Test(u->cargo_type)) {
+						u->last_loading_station = unit->last_station_visited;
+						u->last_loading_tick = _state_ticks;
+					} else {
+						u->last_loading_station = StationID::Invalid();
+					}
+				} else {
+					u->last_loading_station = last_loading_station;
+					u->last_loading_tick = last_loading_tick;
+				}
+			}
+			unit->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
+		}
+	}
+
+}
+
+/**
+ * The passive train of a coupled combination leaves the station at which its wagons loaded and unloaded:
+ * pay for its cargo and update its links, as Vehicle::LeaveStation does.
+ * @param passive The head of the passive train.
+ */
+void LeaveStationCoupledPassive(Vehicle *passive)
+{
+	delete passive->cargo_payment;
+	dbg_assert(passive->cargo_payment == nullptr); // cleared by ~CargoPayment
+	passive->vehicle_flags.Reset(VehicleFlag::StopLoading);
+	UpdateCargoUnitLeavingStation(passive);
+	for (Vehicle *v = passive; v != nullptr; v = v->Next()) v->vehicle_flags.Reset(VehicleFlag::CargoUnloading);
+}
+
+/**
+ * Prepare the loading of the wagons of the passive train of a coupled combination, which stops at a station according to its own orders.
+ * @param passive The head of the passive train, its current order is the loading order.
+ */
+void PrepareCoupledPassiveLoading(Vehicle *passive)
+{
+	VehicleIncreaseStats(passive);
+	PrepareUnloadCargoUnit(passive);
 }
 
 /**
@@ -3584,6 +3689,8 @@ void Vehicle::LeaveStation()
 	TileIndex station_tile = INVALID_TILE;
 
 	if (this->type == VehicleType::Train) {
+		OnTrainLeavingCouplingStation(Train::From(this));
+		if (IsTrainCoupled(Train::From(this))) OnCombinationLeavingStation(Train::From(this));
 		station_tile = Train::From(this)->GetStationLoadingVehicle()->tile;
 		for (Train *v = Train::From(this); v != nullptr; v = v->Next()) {
 			v->flags.Reset({VehicleRailFlag::BeyondPlatformEnd, VehicleRailFlag::NotYetInPlatform});
@@ -3594,61 +3701,7 @@ void Vehicle::LeaveStation()
 	/* Only update the timetable if the vehicle was supposed to stop here. */
 	if (this->current_order.GetNonStopType() != ONSF_STOP_EVERYWHERE) UpdateVehicleTimetable(this, false);
 
-	CargoTypes cargoes_can_load_unload = this->current_order.FilterLoadUnloadTypeCargoMask([&](const Order *o, CargoType cargo) {
-		return (o->GetCargoLoadType(cargo) != OrderLoadType::NoLoad) || (o->GetCargoUnloadType(cargo) != OrderUnloadType::NoUnload);
-	});
-	CargoTypes has_cargo_mask = this->GetLastLoadingStationValidCargoMask();
-	CargoTypes cargoes_can_leave_with_cargo = FilterCargoMask([&](CargoType cargo) {
-		return this->current_order.CanLeaveWithCargo(has_cargo_mask.Test(cargo), cargo);
-	}, cargoes_can_load_unload);
-
-	if (cargoes_can_load_unload.Any()) {
-		if (cargoes_can_leave_with_cargo.Any()) {
-			/* Refresh next hop stats to make sure we've done that at least once
-			 * during the stop and that refit_cap == cargo_cap for each vehicle in
-			 * the consist. */
-			this->ResetRefitCaps();
-			LinkRefresher::Run(this, true, false, cargoes_can_leave_with_cargo);
-		}
-
-		if (cargoes_can_leave_with_cargo == ALL_CARGOTYPES) {
-			/* can leave with all cargoes */
-
-			/* if the vehicle could load here or could stop with cargo loaded set the last loading station */
-			this->last_loading_station = this->last_station_visited;
-			this->last_loading_tick = _state_ticks;
-			this->vehicle_flags.Reset(VehicleFlag::LastLoadStationSeparate);
-		} else if (cargoes_can_leave_with_cargo.None()) {
-			/* can leave with no cargoes */
-
-			/* if the vehicle couldn't load and had to unload or transfer everything
-			 * set the last loading station to invalid as it will leave empty. */
-			this->last_loading_station = StationID::Invalid();
-			this->vehicle_flags.Reset(VehicleFlag::LastLoadStationSeparate);
-		} else {
-			/* mix of cargoes loadable or could not leave with all cargoes */
-
-			/* NB: this is saved here as we overwrite it on the first iteration of the loop below */
-			StationID head_last_loading_station = this->last_loading_station;
-			StateTicks head_last_loading_tick = this->last_loading_tick;
-			for (Vehicle *u = this; u != nullptr; u = u->Next()) {
-				StationID last_loading_station = this->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? u->last_loading_station : head_last_loading_station;
-				StateTicks last_loading_tick = this->vehicle_flags.Test(VehicleFlag::LastLoadStationSeparate) ? u->last_loading_tick : head_last_loading_tick;
-				if (u->cargo_type < NUM_CARGO && cargoes_can_load_unload.Test(u->cargo_type)) {
-					if (cargoes_can_leave_with_cargo.Test(u->cargo_type)) {
-						u->last_loading_station = this->last_station_visited;
-						u->last_loading_tick = _state_ticks;
-					} else {
-						u->last_loading_station = StationID::Invalid();
-					}
-				} else {
-					u->last_loading_station = last_loading_station;
-					u->last_loading_tick = last_loading_tick;
-				}
-			}
-			this->vehicle_flags.Set(VehicleFlag::LastLoadStationSeparate);
-		}
-	}
+	UpdateCargoUnitLeavingStation(this);
 
 	this->current_order.MakeLeaveStation();
 	Station *st = Station::Get(this->last_station_visited);
@@ -3758,7 +3811,8 @@ void Vehicle::RecalculateOrderOccupancyAverage()
  */
 void Vehicle::ResetRefitCaps()
 {
-	for (Vehicle *v = this; v != nullptr; v = v->Next()) v->refit_cap = v->cargo_cap;
+	const Vehicle *unit_end = GetCargoUnitEnd(this);
+	for (Vehicle *v = this; v != unit_end; v = v->Next()) v->refit_cap = v->cargo_cap;
 }
 
 /**
@@ -3809,7 +3863,8 @@ void Vehicle::HandleLoading(bool mode)
 			if (!mode && this->type != VehicleType::Train) PayStationSharingFee(this, Station::Get(this->last_station_visited));
 
 			/* Not the first call for this tick, or still loading */
-			if (mode || !this->vehicle_flags.Test(VehicleFlag::LoadingFinished) || (this->current_order_time < wait_time && this->current_order.GetLeaveType() != OLT_LEAVE_EARLY) || ShouldVehicleContinueWaiting(this)) {
+			if (mode || !this->vehicle_flags.Test(VehicleFlag::LoadingFinished) || (this->current_order_time < wait_time && this->current_order.GetLeaveType() != OLT_LEAVE_EARLY) || ShouldVehicleContinueWaiting(this) ||
+					(this->type == VehicleType::Train && IsTrainBeingApproachedForCoupling(Train::From(this)))) {
 				if (!mode && this->type == VehicleType::Train && Train::From(this)->flags.Test(VehicleRailFlag::AdvanceInPlatform)) this->AdvanceLoadingInStation();
 				return;
 			}
@@ -4560,6 +4615,31 @@ void Vehicle::AddToShared(Vehicle *shared_chain)
 }
 
 /**
+ * Swap the order list and the position in the shared vehicle chain of this vehicle with another vehicle.
+ * Used when the identities of two trains are swapped while coupling or splitting.
+ * @param other The vehicle to swap with.
+ */
+void Vehicle::SwapSharedOrderListMembership(Vehicle *other)
+{
+	/* Same order list (or both have none): the shared chain membership is identical. */
+	if (this->orders == other->orders) return;
+
+	std::swap(this->orders, other->orders);
+	std::swap(this->next_shared, other->next_shared);
+	std::swap(this->previous_shared, other->previous_shared);
+
+	for (Vehicle *v : { this, other }) {
+		if (v->orders == nullptr) continue;
+		if (v->next_shared != nullptr) v->next_shared->previous_shared = v;
+		if (v->previous_shared != nullptr) {
+			v->previous_shared->next_shared = v;
+		} else {
+			v->orders->ReplaceFirstSharedVehicle(v);
+		}
+	}
+}
+
+/**
  * Removes the vehicle from the shared order list.
  */
 void Vehicle::RemoveFromShared()
@@ -4750,8 +4830,8 @@ void Vehicle::DumpVehicleFlagsMultiline(format_target &buffer, const char *base_
 
 void VehiclesYearlyLoop()
 {
-	for (Vehicle *v : Vehicle::IterateFrontOnly()) {
-		if (v->IsPrimaryVehicle()) {
+	for (Vehicle *v : GetFrontAndCoupledPassiveVehicles()) {
+		if (IsPrimaryOrCoupledPassiveVehicle(v)) {
 			/* show warning if vehicle is not generating enough income last 2 years (corresponds to a red icon in the vehicle list) */
 			Money profit = v->GetDisplayProfitThisYear();
 			if (v->economy_age >= VEHICLE_PROFIT_MIN_AGE && profit < 0) {

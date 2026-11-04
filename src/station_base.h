@@ -302,6 +302,21 @@ public:
 	StationID GetVia(StationID excluded, StationID excluded2 = StationID::Invalid()) const;
 
 	/**
+	 * Get a station a package can be routed to, like GetViaWithRestricted, but chosen by a given value instead of a random number.
+	 * The same value always gives the same station as long as the flows do not change.
+	 * @param value Value which replaces the random number, e.g. a hash of the packet.
+	 * @param is_restricted Output if a restricted flow was chosen.
+	 * @return A station ID from the shares map.
+	 */
+	inline StationID GetViaDeterministic(uint32_t value, bool &is_restricted) const
+	{
+		assert(!this->empty());
+		uint pick = value % this->GetLastKey();
+		is_restricted = pick >= this->unrestricted;
+		return this->upper_bound(pick)->second;
+	}
+
+	/**
 	 * Mark this flow stat as invalid, such that it is not included in link statistics.
 	 * @return True if the flow stat should be deleted.
 	 */

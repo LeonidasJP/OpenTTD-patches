@@ -39,6 +39,7 @@
 #include "debug.h"
 #include "3rdparty/cpp-btree/btree_set.h"
 #include "3rdparty/cpp-btree/btree_map.h"
+#include "train_coupling.h"
 #include "3rdparty/robin_hood/robin_hood.h"
 
 #include <vector>
@@ -1957,7 +1958,7 @@ static DepartureList MakeDepartureListScheduleMode(DepartureOrderDestinationDete
 
 		const Vehicle *v = nullptr;
 		for (const Vehicle *u = veh->FirstShared(); u != nullptr; u = u->NextShared()) {
-			if (IsVehicleUsableForDepartures(u, calling_settings)) {
+			if (IsPrimaryOrCoupledPassiveVehicle(u) && IsVehicleUsableForDepartures(u, calling_settings)) {
 				v = u;
 				break;
 			}

@@ -45,6 +45,7 @@ enum class RailTypeCtrlFlag : uint8_t {
 	NoRealisticBraking       = 2, ///< Realistic braking disabled for this track type
 	SigSpriteRecolourEnabled = 3, ///< Recolour sprites enabled
 	SigSpriteNoEntry         = 4, ///< Custom signal sprites enabled for no-entry signals.
+	SigSpriteCouplingAspect  = 5, ///< Custom signal sprite flag enabled for the coupling aspect.
 };
 using RailTypeCtrlFlags = EnumBitSet<RailTypeCtrlFlag, uint8_t>;
 
