@@ -107,6 +107,7 @@ struct OrderSerialisationFieldNames {
 		static constexpr char COUPLING_ARRIVING_LEADS[]     = "coupling-arriving-leads";     ///< bool
 		static constexpr char COUPLING_FILTER[]             = "coupling-filter";             ///< enum
 		static constexpr char COUPLING_FILTER_ID[]          = "coupling-filter-id";          ///< int     Group ID or order list ID
+		static constexpr char COUPLING_SPLIT_POSITION[]     = "coupling-split-position";     ///< enum
 		static constexpr char DEPOT_COUPLED_ALLOWED[]       = "depot-coupled-allowed";       ///< bool
 		static constexpr char LOAD[]                        = "load";                        ///< enum
 		static constexpr char UNLOAD[]                      = "unload";                      ///< enum
@@ -263,6 +264,8 @@ static nlohmann::ordered_json OrderToJSON(const Order &o, VehicleType vt)
 					json[OFName::COUPLING_FILTER] = o.GetCouplingFilter();
 					json[OFName::COUPLING_FILTER_ID] = o.GetCouplingFilterID();
 				}
+			} else if (o.GetCouplingSplitPosition() != OrderSplitPosition::Own) {
+				json[OFName::COUPLING_SPLIT_POSITION] = o.GetCouplingSplitPosition();
 			}
 		}
 
@@ -1660,6 +1663,8 @@ OrderImportErrors ImportJsonOrderList(const Vehicle *veh, std::string_view json_
 					if (local_importer.TryApplyModifyOrder<OrderCouplingFilter>(FName::Orders::COUPLING_FILTER, MOF_COUPLING_FILTER, JOIET_MINOR, std::nullopt, INVALID_CARGO, order_id)) {
 						local_importer.TryApplyModifyOrder<uint16_t>(FName::Orders::COUPLING_FILTER_ID, MOF_COUPLING_FILTER_ID, JOIET_MINOR, std::nullopt, INVALID_CARGO, order_id);
 					}
+				} else {
+					local_importer.TryApplyModifyOrder<OrderSplitPosition>(FName::Orders::COUPLING_SPLIT_POSITION, MOF_COUPLING_SPLIT_POSITION, JOIET_MINOR, std::nullopt, INVALID_CARGO, order_id);
 				}
 			}
 

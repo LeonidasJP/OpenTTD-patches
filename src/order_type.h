@@ -173,6 +173,16 @@ enum class OrderCouplingMode : uint8_t {
 };
 
 /**
+ * Which part of the combination a train continues with after splitting at a station order with #OrderCouplingMode::Split.
+ */
+enum class OrderSplitPosition : uint8_t {
+	Own   = 0, ///< The part the train coupled with.
+	Front = 1, ///< The front part, in the driving direction when arriving at the split station.
+	Rear  = 2, ///< The rear part, in the driving direction when arriving at the split station.
+	End,       ///< End marker.
+};
+
+/**
  * Which trains may be coupled to at a station order with #OrderCouplingMode::Couple.
  */
 enum class OrderCouplingFilter : uint8_t {
@@ -337,6 +347,7 @@ enum ModifyOrderFlags : uint8_t {
 	MOF_COUPLING_FILTER, ///< Passes an OrderCouplingFilter.
 	MOF_COUPLING_FILTER_ID, ///< Passes the GroupID or OrderListID of the coupling filter.
 	MOF_DEPOT_COUPLED_ALLOWED, ///< Passes whether a coupled combination may stop in the depot.
+	MOF_COUPLING_SPLIT_POSITION, ///< Passes an OrderSplitPosition.
 	MOF_END
 };
 

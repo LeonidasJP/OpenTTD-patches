@@ -466,6 +466,8 @@ public:
 	inline OrderCouplingMode GetCouplingMode() const { return this->IsType(OT_GOTO_STATION) ? static_cast<OrderCouplingMode>(GB(this->flags, 8, 2)) : OrderCouplingMode::None; }
 	/** Whether the arriving train leads the combination when coupling at a station order. */
 	inline bool IsCouplingArrivingLeads() const { return HasBit(this->flags, 10); }
+	/** Which part of the combination the train continues with after splitting at a station order. */
+	inline OrderSplitPosition GetCouplingSplitPosition() const { return this->GetCouplingMode() == OrderCouplingMode::Split ? static_cast<OrderSplitPosition>(GB(this->flags, 11, 2)) : OrderSplitPosition::Own; }
 	/** Which trains may be coupled to at a station order. */
 	inline OrderCouplingFilter GetCouplingFilter() const { return static_cast<OrderCouplingFilter>(GB(this->GetXData2(), 0, 2)); }
 	/** The GroupID or OrderListID of the coupling filter. */
@@ -579,6 +581,8 @@ public:
 	inline void SetCouplingMode(OrderCouplingMode mode) { SB(this->flags, 8, 2, to_underlying(mode)); }
 	/** Set whether the arriving train leads the combination when coupling at a station order. */
 	inline void SetCouplingArrivingLeads(bool arriving_leads) { AssignBit(this->flags, 10, arriving_leads); }
+	/** Set which part of the combination the train continues with after splitting at a station order. */
+	inline void SetCouplingSplitPosition(OrderSplitPosition position) { SB(this->flags, 11, 2, to_underlying(position)); }
 	/** Set which trains may be coupled to at a station order. */
 	inline void SetCouplingFilter(OrderCouplingFilter filter) { SB(this->GetXData2Ref(), 0, 2, to_underlying(filter)); }
 	/** Set the GroupID or OrderListID of the coupling filter. */

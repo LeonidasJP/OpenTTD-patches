@@ -39,6 +39,13 @@ NLOHMANN_JSON_SERIALIZE_ENUM(OrderCouplingMode, {
 	{OrderCouplingMode::Split, "split"}
 })
 
+NLOHMANN_JSON_SERIALIZE_ENUM(OrderSplitPosition, {
+	{OrderSplitPosition::End, nullptr},
+	{OrderSplitPosition::Own, "own"},
+	{OrderSplitPosition::Front, "front"},
+	{OrderSplitPosition::Rear, "rear"}
+})
+
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderCouplingFilter, {
 	{OrderCouplingFilter::End, nullptr},
 	{OrderCouplingFilter::Any, "any"},
