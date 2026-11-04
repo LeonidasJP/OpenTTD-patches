@@ -62,7 +62,7 @@ void OnTrainLeavingCouplingStation(Train *t);
 CommandCost CheckCanCoupleTrains(const Train *waiting, const Train *arriving);
 void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads);
 CommandCost CheckCanSplitCombination(const Train *head);
-Train *SplitCombination(Train *head);
+Train *SplitCombination(Train *head, std::optional<bool> leader_on_second = std::nullopt);
 
 void OnTrainCouplingVehicleDeleted(Train *v);
 void ValidateTrainCouplings();
@@ -86,17 +86,17 @@ const Vehicle *GetCargoUnitEnd(const Vehicle *unit_front);
 const Vehicle *GetCargoUnitFront(const Vehicle *v);
 bool IsCoupledPassiveTrainStoppingAt(const Vehicle *passive, StationID station);
 
-/** Where a coupled combination splits, and where both trains go next. */
+/** Where a coupled combination splits, and where both parts of the combination go next. */
 struct CouplingSplitRoute {
 	StationID split_station = StationID::Invalid(); ///< Station where the combination splits.
-	StationID leader_after = StationID::Invalid();  ///< Next station of the leading train after the split.
-	StationID passive_after = StationID::Invalid(); ///< Next station of the passive train after the split.
+	StationID first_after = StationID::Invalid();   ///< Next station of the first part (from the head of the combination) after the split.
+	StationID second_after = StationID::Invalid();  ///< Next station of the second part (from the passive head) after the split.
 
 	/** Do both trains go to different, known stations after the split? */
 	bool IsValid() const
 	{
-		return this->split_station != StationID::Invalid() && this->leader_after != StationID::Invalid() &&
-				this->passive_after != StationID::Invalid() && this->leader_after != this->passive_after;
+		return this->split_station != StationID::Invalid() && this->first_after != StationID::Invalid() &&
+				this->second_after != StationID::Invalid() && this->first_after != this->second_after;
 	}
 };
 

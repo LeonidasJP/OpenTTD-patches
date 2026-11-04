@@ -94,7 +94,11 @@ static void AppendOrderCouplingString(format_target &line, const Order *order)
 {
 	switch (order->GetCouplingMode()) {
 		case OrderCouplingMode::Split:
-			AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT);
+			switch (order->GetCouplingSplitPosition()) {
+				case OrderSplitPosition::Front: AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT_FRONT); break;
+				case OrderSplitPosition::Rear:  AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT_REAR); break;
+				default:                        AppendStringInPlace(line, STR_ORDER_COUPLING_SPLIT); break;
+			}
 			break;
 
 		case OrderCouplingMode::Couple: {
@@ -3252,6 +3256,12 @@ public:
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Any, STR_ORDER_COUPLING_FILTER_ANY, 0x700 + to_underlying(OrderCouplingFilter::Any), false));
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Group, STR_ORDER_COUPLING_FILTER_GROUP, 0x700 + to_underlying(OrderCouplingFilter::Group), false));
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::OrderList, STR_ORDER_COUPLING_FILTER_ORDERLIST, 0x700 + to_underlying(OrderCouplingFilter::OrderList), false));
+					} else if (mode == OrderCouplingMode::Split) {
+						const OrderSplitPosition position = order->GetCouplingSplitPosition();
+						list.push_back(MakeDropDownListDividerItem());
+						list.push_back(MakeDropDownListCheckedItem(position == OrderSplitPosition::Own, STR_ORDER_COUPLING_SPLIT_POSITION_OWN, 0x900 + to_underlying(OrderSplitPosition::Own), false));
+						list.push_back(MakeDropDownListCheckedItem(position == OrderSplitPosition::Front, STR_ORDER_COUPLING_SPLIT_POSITION_FRONT, 0x900 + to_underlying(OrderSplitPosition::Front), false));
+						list.push_back(MakeDropDownListCheckedItem(position == OrderSplitPosition::Rear, STR_ORDER_COUPLING_SPLIT_POSITION_REAR, 0x900 + to_underlying(OrderSplitPosition::Rear), false));
 					}
 				}
 
@@ -4119,6 +4129,10 @@ public:
 				}
 				if (index == 0x600 || index == 0x601) {
 					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_LEADER, index & 0xFF);
+					break;
+				}
+				if (index >= 0x900 && index < 0x900 + to_underlying(OrderSplitPosition::End)) {
+					this->ModifyOrder(this->OrderGetSel(), MOF_COUPLING_SPLIT_POSITION, index & 0xFF);
 					break;
 				}
 				if (index == 0x800) {

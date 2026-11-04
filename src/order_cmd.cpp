@@ -1981,7 +1981,8 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		switch (order->GetType()) {
 			case OT_GOTO_STATION:
 				if (mof != MOF_NON_STOP && mof != MOF_STOP_LOCATION && mof != MOF_UNLOAD && mof != MOF_LOAD && mof != MOF_CARGO_TYPE_UNLOAD && mof != MOF_CARGO_TYPE_LOAD && mof != MOF_RV_TRAVEL_DIR &&
-						mof != MOF_COUPLING_MODE && mof != MOF_COUPLING_LEADER && mof != MOF_COUPLING_FILTER && mof != MOF_COUPLING_FILTER_ID) return CMD_ERROR;
+						mof != MOF_COUPLING_MODE && mof != MOF_COUPLING_LEADER && mof != MOF_COUPLING_FILTER && mof != MOF_COUPLING_FILTER_ID &&
+						mof != MOF_COUPLING_SPLIT_POSITION) return CMD_ERROR;
 				break;
 
 			case OT_GOTO_DEPOT:
@@ -2055,6 +2056,12 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 		case MOF_COUPLING_FILTER:
 			if (v->type != VehicleType::Train) return CMD_ERROR;
 			if (data >= to_underlying(OrderCouplingFilter::End)) return CMD_ERROR;
+			break;
+
+		case MOF_COUPLING_SPLIT_POSITION:
+			if (v->type != VehicleType::Train) return CMD_ERROR;
+			if (data >= to_underlying(OrderSplitPosition::End)) return CMD_ERROR;
+			if (order->GetCouplingMode() != OrderCouplingMode::Split) return CMD_ERROR;
 			break;
 
 		case MOF_DEPOT_COUPLED_ALLOWED:
@@ -2412,7 +2419,12 @@ CommandCost CmdModifyOrder(DoCommandFlags flags, VehicleID veh, VehicleOrderID s
 				break;
 
 			case MOF_COUPLING_MODE:
+				if (order->GetCouplingMode() != static_cast<OrderCouplingMode>(data)) order->SetCouplingSplitPosition(OrderSplitPosition::Own);
 				order->SetCouplingMode(static_cast<OrderCouplingMode>(data));
+				break;
+
+			case MOF_COUPLING_SPLIT_POSITION:
+				order->SetCouplingSplitPosition(static_cast<OrderSplitPosition>(data));
 				break;
 
 			case MOF_COUPLING_LEADER:

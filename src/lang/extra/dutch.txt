@@ -133,12 +133,17 @@ STR_ERROR_TRAIN_COUPLING_NO_ORDER_LIST                          :{WHITE}... kies
 STR_ORDER_COUPLING_MODE_NONE                                    :Niet koppelen of splitsen
 STR_ORDER_COUPLING_MODE_COUPLE                                  :Hier treinen koppelen
 STR_ORDER_COUPLING_MODE_SPLIT                                   :Hier trein splitsen
+STR_ORDER_COUPLING_SPLIT_POSITION_OWN                           :Na splitsen: verder met eigen deel
+STR_ORDER_COUPLING_SPLIT_POSITION_FRONT                         :Na splitsen: verder als voorste deel
+STR_ORDER_COUPLING_SPLIT_POSITION_REAR                          :Na splitsen: verder als achterste deel
 STR_ORDER_COUPLING_LEADER_WAITING                               :Koppelen: wachtende trein leidt
 STR_ORDER_COUPLING_LEADER_ARRIVING                              :Koppelen: aankomende trein leidt
 STR_ORDER_COUPLING_FILTER_ANY                                   :Koppelen aan: elke trein
 STR_ORDER_COUPLING_FILTER_GROUP                                 :Koppelen aan: trein in groep...
 STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Koppelen aan: trein met orders van...
 STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[splitsen]
+STR_ORDER_COUPLING_SPLIT_FRONT                                  :{SPACE}[splitsen, verder als voorste deel]
+STR_ORDER_COUPLING_SPLIT_REAR                                   :{SPACE}[splitsen, verder als achterste deel]
 STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[koppelen: elke trein{STRING}]
 STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[koppelen: groep {GROUP}{STRING}]
 STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[koppelen: orders van {VEHICLE}{STRING}]
