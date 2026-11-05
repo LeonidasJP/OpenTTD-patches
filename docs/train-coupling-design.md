@@ -172,16 +172,20 @@ Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toeg
 
 **Volgorde en splitsen:** het filter verandert de koppelmodus niet. De volgordecontrole (§3.1) en de `Splitsen`-order werken dus ongewijzigd. Een `Splitsen`-order doet niets bij een trein die niet gekoppeld rijdt.
 
-**Testopzet RS3** ("Friese Coupler", trein 30, gedeelde orderlijst, met één extra trein):
+**Testopzet RS3** ("Friese Coupler", trein 30 plus vier klonen, gedeelde orderlijst):
 
-- **Koppelslots in Sneek** (schema "Sneek > Leeuwarden", order 23): 08:32, 19:32 en 0:02. De korte ritten vertrekken uit Leeuwarden om 07:53, 18:53 en 23:23. De treinen uit Stavoren vertrekken daar om 08:00, 19:00 en 23:30.
-- **Extra vertrek:** 20:32 Sneek > Leeuwarden, voor de korte rit van 19:53.
+- **Dienstregeling Sneek > Leeuwarden:** alle vertrekken op :02 en :32 zijn :05 en :35 geworden, met 4 minuten maximale vertraging. Extra vertrek: 20:35.
+- **Koppelslots in Sneek** (order 23): 08:35, 19:35 en 0:05. De korte ritten vertrekken uit Leeuwarden om 07:53, 18:53 en 23:23. De treinen uit Stavoren vertrekken daar om 08:00, 19:00 en 23:30.
 - **15:53 Leeuwarden met twee treinstellen:**
-  - koppelslot op order 3 (Leeuwarden, schema "Leeuwarden");
-  - de tweede trein krijgt extra slots in Remise en Opstel;
-  - `Splitsen` op order 11 (Sneek, heenreis);
-  - het voorste stel (de leider) rijdt door als de 16:19 naar Stavoren;
-  - het achterste stel gaat via conditionele orders ("leidt" / "gekoppeld") naar order 23 en keert als de 16:32 naar Leeuwarden.
+  - de 15:32 uit Sneek vertrekt om 15:28 en heeft tag 3. Een conditionele order ("slot heeft tag 3") vóór de Leeuwarden-order stuurt hem naar order 3 in plaats van naar het depot;
+  - koppelslot op order 3 (Leeuwarden, schema "Leeuwarden"). Die order stopt aan het begin van het perron, want het perron is maar twee tegels lang;
+  - `Splitsen` op order 11 (Sneek, heenreis), positie "voorste deel";
+  - het voorste stel (de leider) rijdt door naar Stavoren;
+  - het achterste stel gaat via conditionele orders ("leidt" / "gekoppeld") naar order 23 en keert als de 16:35 naar Leeuwarden.
+- **Infrastructuur:** dubbelspoor Wiuwert–Boazum en IJlst–Oudega. Zonder dat dubbelspoor doen de treinen uit Stavoren 36–39 minuten over Stavoren–Sneek en missen ze hun slot.
+- **Uitslag:** een dag gesimuleerd. Alle koppelingen en splitsingen gebeuren volgens de dienstregeling, zonder botsingen.
+
+**Bekende beperking:** reserveert de aankomende trein zijn pad naar het station voordat de partner in het perron staat, dan kan dat pad niet meer naar het perron van de partner worden omgeleid. De partner moet er dus eerder staan dan de aankomende trein zijn laatste reservering maakt. Bij Leeuwarden 15:53 was dat de reden om de rit uit Sneek op 15:28 te zetten in plaats van 15:25.
 
 ## 4. Fysiek koppelen en splitsen
 
@@ -532,7 +536,7 @@ Een combinatie, of twee treinen die volgens de voorspelling in hetzelfde koppels
 3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders. *Gebouwd.* Nog niet gedaan: een melding bij "alle voertuigen naar depot" vanuit een voertuiglijst, en de volgordecontrole bij het invoegen van de orders van een ander voertuig.
 4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel. *Gebouwd:* de dienstregeling van het passieve stel (§3.4a), vertrekborden, het eigen venster en de groep van het passieve stel, en de gespiegelde orders (§9). Daarna gebouwd: lading per stel, stap A en B (§7.2a, §7.2b).
 5. **Fase 5 – seinbeeld:** knipperende seinen, de recolour-sprites, de groen-geel-variant en de NewGRF-bit 25 met documentatie in `newgrf-additions.html`.
-6. **Fase 6 – koppelslot:** de slotvlag "Koppelen", het partnerfilter "Zelfde vertrekslot" (§3.8) en het samengevoegde vertrekbord (§9.1).
+6. **Fase 6 – koppelslot:** de slotvlag "Koppelen", het partnerfilter "Zelfde vertrekslot" (§3.8) en het samengevoegde vertrekbord (§9.1). *Gebouwd:* de slotvlag, het partnerfilter en de padzoeker. Nog niet gebouwd: het samengevoegde vertrekbord.
 
 **Testscenario's:**
 
