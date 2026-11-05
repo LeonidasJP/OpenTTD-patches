@@ -807,7 +807,7 @@ std::pair<StateTicks, int> GetScheduledDispatchTime(const DispatchSchedule &ds, 
 		if (current_offset >= dispatch_duration) continue;
 
 		int32_t threshold = last_dispatched_offset;
-		if (HasBit(slot.flags, DispatchSlot::SDSF_REUSE_SLOT)) threshold--;
+		if (slot.IsReusable()) threshold--;
 		if ((int32_t)current_offset <= threshold) {
 			current_offset += ((threshold + dispatch_duration - current_offset) / dispatch_duration) * dispatch_duration;
 		}
@@ -889,6 +889,11 @@ void UpdateVehicleTimetable(Vehicle *v, bool travelling)
 			StateTicks slot;
 			int slot_index;
 			std::tie(slot, slot_index) = GetScheduledDispatchTime(ds, _state_ticks + wait_offset);
+
+			/* A train which arrives to couple to its partner in a coupling slot departs in the slot of the partner. */
+			if (auto coupling_slot = GetCouplingArrivalDispatchSlot(v, static_cast<uint>(real_implicit_order->GetDispatchScheduleIndex())); coupling_slot.has_value()) {
+				std::tie(slot, slot_index) = *coupling_slot;
+			}
 
 			if (slot != INVALID_STATE_TICKS) {
 				just_started = !v->vehicle_flags.Test(VehicleFlag::TimetableStarted);

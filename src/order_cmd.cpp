@@ -3330,6 +3330,10 @@ void CheckOrders(const Vehicle *v)
 						message = STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED;
 						break;
 					}
+					if (order->GetCouplingMode() == OrderCouplingMode::Couple && order->GetCouplingFilter() == OrderCouplingFilter::DispatchSlot && !order->IsScheduledDispatchOrder(true)) {
+						message = STR_NEWS_VEHICLE_COUPLING_SLOT_NO_SCHEDULE;
+						break;
+					}
 				}
 			}
 		}

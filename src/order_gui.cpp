@@ -124,6 +124,10 @@ static void AppendOrderCouplingString(format_target &line, const Order *order)
 					break;
 				}
 
+				case OrderCouplingFilter::DispatchSlot:
+					AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_DISPATCH_SLOT, leader);
+					break;
+
 				default:
 					AppendStringInPlace(line, STR_ORDER_COUPLING_COUPLE_ANY, leader);
 					break;
@@ -3256,6 +3260,7 @@ public:
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Any, STR_ORDER_COUPLING_FILTER_ANY, 0x700 + to_underlying(OrderCouplingFilter::Any), false));
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::Group, STR_ORDER_COUPLING_FILTER_GROUP, 0x700 + to_underlying(OrderCouplingFilter::Group), false));
 						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::OrderList, STR_ORDER_COUPLING_FILTER_ORDERLIST, 0x700 + to_underlying(OrderCouplingFilter::OrderList), false));
+						list.push_back(MakeDropDownListCheckedItem(filter == OrderCouplingFilter::DispatchSlot, STR_ORDER_COUPLING_FILTER_DISPATCH_SLOT, 0x700 + to_underlying(OrderCouplingFilter::DispatchSlot), false));
 					} else if (mode == OrderCouplingMode::Split) {
 						const OrderSplitPosition position = order->GetCouplingSplitPosition();
 						list.push_back(MakeDropDownListDividerItem());

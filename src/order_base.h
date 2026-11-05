@@ -952,16 +952,20 @@ struct DispatchSlot {
 		return this->offset < other.offset;
 	}
 
+	/** May this slot be used by more than one vehicle? A coupling slot may be used by both trains which couple. */
+	inline bool IsReusable() const { return HasBit(this->flags, SDSF_REUSE_SLOT) || HasBit(this->flags, SDSF_COUPLE); }
+
 	/**
 	 * Flag bit numbers for scheduled_dispatch_flags
 	 */
 	enum ScheduledDispatchSlotFlags {
 		SDSF_REUSE_SLOT                           = 0,  ///< Allow this slot to be used more than once
+		SDSF_COUPLE                               = 1,  ///< Trains which depart in this slot couple, see OrderCouplingFilter::DispatchSlot. Two trains may use this slot.
 		SDSF_FIRST_TAG                            = 8,  ///< First tag flag
 		SDSF_LAST_TAG                             = 11, ///< Last tag flag
 	};
 
-	static constexpr uint16_t PERMITTED_FLAG_MASK = GetBitMaskSC<uint16_t>(SDSF_REUSE_SLOT, 1) |
+	static constexpr uint16_t PERMITTED_FLAG_MASK = GetBitMaskSC<uint16_t>(SDSF_REUSE_SLOT, 1) | GetBitMaskSC<uint16_t>(SDSF_COUPLE, 1) |
 			GetBitMaskFL<uint16_t>(SDSF_FIRST_TAG, SDSF_LAST_TAG);
 };
 
