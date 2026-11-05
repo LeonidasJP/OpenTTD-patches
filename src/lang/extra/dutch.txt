@@ -141,10 +141,12 @@ STR_ORDER_COUPLING_LEADER_ARRIVING                              :Koppelen: aanko
 STR_ORDER_COUPLING_FILTER_ANY                                   :Koppelen aan: elke trein
 STR_ORDER_COUPLING_FILTER_GROUP                                 :Koppelen aan: trein in groep...
 STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Koppelen aan: trein met orders van...
+STR_ORDER_COUPLING_FILTER_DISPATCH_SLOT                         :Koppelen aan: trein in hetzelfde koppelslot
 STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[splitsen]
 STR_ORDER_COUPLING_SPLIT_FRONT                                  :{SPACE}[splitsen, verder als voorste deel]
 STR_ORDER_COUPLING_SPLIT_REAR                                   :{SPACE}[splitsen, verder als achterste deel]
 STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[koppelen: elke trein{STRING}]
+STR_ORDER_COUPLING_COUPLE_DISPATCH_SLOT                         :{SPACE}[koppelen: zelfde koppelslot{STRING}]
 STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[koppelen: groep {GROUP}{STRING}]
 STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[koppelen: orders van {VEHICLE}{STRING}]
 STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[koppelen: {PUSH_COLOUR}{RED}onbepaald{POP_COLOUR}{STRING}]
@@ -165,6 +167,10 @@ STR_VEHICLE_STATUS_LOADING_UNLOADING_WAIT_COUPLING              :{LTBLUE}In- en 
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Gekoppelde combinatie {VEHICLE} is in een depot gestopt
 STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} heeft twee Koppelen-orders zonder Splitsen-order ertussen
 STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} heeft een Koppelen-order met een verwijderde groep of orderlijst
+STR_NEWS_VEHICLE_COUPLING_SLOT_NO_SCHEDULE                      :{WHITE}{VEHICLE} heeft een Koppelen-order voor hetzelfde vertrekslot zonder Scheduled Dispatch
+STR_SCHDISPATCH_COUPLE_THIS_DEPARTURE_SLOT                      :Koppelen bij dit vertrek
+STR_SCHDISPATCH_COUPLE_DEPARTURE_SLOT_SHORT                     :Koppelen
+STR_SCHDISPATCH_SLOT_TOOLTIP_COUPLE                             :{}Treinen die in dit slot vertrekken, koppelen (Koppelen-orders met 'zelfde koppelslot')
 STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Gekoppelde combinatie naar depot sturen
 STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}Deze trein is gekoppeld aan een andere trein. De gekoppelde combinatie naar een depot sturen om daar te stoppen?
 STR_CONFIG_SETTING_TRAIN_COUPLING_SPEED                         :Maximumsnelheid bij koppelen: {STRING2}

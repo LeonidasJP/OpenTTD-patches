@@ -633,6 +633,10 @@ struct SchdispatchWindow : GeneralVehicleWindow {
 						AppendStringInPlace(buf, STR_SCHDISPATCH_SLOT_TOOLTIP_REUSE);
 					}
 
+					if (HasBit(flags, DispatchSlot::SDSF_COUPLE)) {
+						AppendStringInPlace(buf, STR_SCHDISPATCH_SLOT_TOOLTIP_COUPLE);
+					}
+
 					if (slot->route_id != 0) {
 						buf.push_back('\n');
 						AppendStringInPlace(buf, STR_SCHDISPATCH_ROUTE, ds.GetSupplementaryName(DispatchSchedule::SupplementaryNameType::RouteID, slot->route_id));
@@ -787,6 +791,11 @@ struct SchdispatchWindow : GeneralVehicleWindow {
 						auto prepare_str = [&](bool short_mode) {
 							if (HasBit(flags, DispatchSlot::SDSF_REUSE_SLOT)) {
 								AppendStringInPlace(str, STR_SCHDISPATCH_REUSE_DEPARTURE_SLOTS_SHORT);
+							}
+
+							if (HasBit(flags, DispatchSlot::SDSF_COUPLE)) {
+								if (!str.empty()) str.append(GetListSeparator());
+								AppendStringInPlace(str, STR_SCHDISPATCH_COUPLE_DEPARTURE_SLOT_SHORT);
 							}
 
 							if (slot.route_id != 0) {
@@ -1402,6 +1411,7 @@ struct SchdispatchWindow : GeneralVehicleWindow {
 					list.push_back(MakeDropDownListCheckedItem(HasBit(merged_flags, bit), std::move(str), bit, disabled));
 				};
 				add_item(GetString(STR_SCHDISPATCH_REUSE_THIS_DEPARTURE_SLOT), DispatchSlot::SDSF_REUSE_SLOT, schedule.GetScheduledDispatchReuseSlots());
+				add_item(GetString(STR_SCHDISPATCH_COUPLE_THIS_DEPARTURE_SLOT), DispatchSlot::SDSF_COUPLE, false);
 				list.push_back(MakeDropDownListDividerItem());
 				for (uint8_t flag_bit = DispatchSlot::SDSF_FIRST_TAG; flag_bit <= DispatchSlot::SDSF_LAST_TAG; flag_bit++) {
 					std::string_view name = schedule.GetSupplementaryName(DispatchSchedule::SupplementaryNameType::DepartureTag, flag_bit - DispatchSlot::SDSF_FIRST_TAG);

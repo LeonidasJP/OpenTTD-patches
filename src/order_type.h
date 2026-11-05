@@ -189,6 +189,7 @@ enum class OrderCouplingFilter : uint8_t {
 	Any       = 0, ///< Any train.
 	Group     = 1, ///< Trains of a group.
 	OrderList = 2, ///< Trains with a specific (shared) order list.
+	DispatchSlot = 3, ///< Trains which depart in the same scheduled dispatch slot, only if that slot has DispatchSlot::SDSF_COUPLE.
 	End,           ///< End marker.
 };
 
