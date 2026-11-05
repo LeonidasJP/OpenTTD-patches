@@ -143,6 +143,46 @@ Er komt een nieuwe vlag in `OrderDepotExtraFlags`: **"Gekoppelde combinatie toeg
 
 *Gebouwd:* stationsorders krijgen de velden `coupling-mode` (`none`/`couple`/`split`), `coupling-arriving-leads`, `coupling-filter` (`any`/`group`/`order-list`), `coupling-filter-id` en `coupling-split-position` (`front`/`rear`, alleen bij `split`; ontbreekt bij `Eigen deel`). Depotorders krijgen `depot-coupled-allowed`. Bij het importeren worden de koppelmodi pas na alle orders gezet: eerst alle `Splitsen`, dan alle `Koppelen`. Zo is de volgorde steeds geldig.
 
+### 3.8 Koppelslot: alleen koppelen bij gemarkeerde vertrekken (fase 6)
+
+**Doel:** op een lijn met Scheduled Dispatch alleen bij bepaalde vertrekken koppelen. Voorbeeld RS3: een korte rit Leeuwarden–Sneek wacht in Sneek op de trein uit Stavoren, en om 08:32 rijden ze samen naar Leeuwarden. Bij de andere vertrekken uit Sneek wordt niet gekoppeld, ook niet als er toevallig twee treinen tegelijk staan.
+
+**Besluiten van de opdrachtgever:**
+
+| Onderwerp | Besluit |
+|---|---|
+| Markering | Een eigen slotvlag **"Koppelen"** in Scheduled Dispatch, naast "Slot hergebruiken" en de tags. |
+| Order | Een gewone `Koppelen`-order met het nieuwe partnerfilter **"Zelfde vertrekslot"**. Leider en positie stel je in zoals altijd. |
+| Orderlijsten | Voorlopig moeten beide treinen **één gedeelde orderlijst** hebben. De code legt al wel voorwerk voor aparte lijsten. |
+| Vertrekbord | Een gekoppeld vertrek staat als **één regel** op het bord (§9.1). |
+
+**Slotvlag:** `DispatchSlot::SDSF_COUPLE` gebruikt bit 1 van `DispatchSlot::flags`. Die bit was nog vrij en de vlaggen worden al opgeslagen, dus het savegame-formaat verandert niet. In het slotmenu staat de schakelaar "Koppelen bij dit vertrek". De tooltip en de slotlijst tonen de vlag ook. JSON: veld `coupling` in het slot.
+
+**Twee treinen per slot:** een koppelslot mag door een tweede trein worden opgeëist, net als bij "Slot hergebruiken". Dat geldt in `GetScheduledDispatchTime` en in de voorspelling van het vertrekbord. Een derde trein die binnen de maximale vertraging aankomt, kan het slot ook nog krijgen. Hij koppelt dan niet, want een combinatie is nooit partner (§5.3), en vertrekt alleen. Dat geval is bewust niet afgevangen.
+
+**Partnerfilter "Zelfde vertrekslot":** `OrderCouplingFilter::DispatchSlot` (waarde 3) in `xdata2` bits 0–1. Het filter werkt alleen op een stationsorder met een dispatch-schema; anders waarschuwt `CheckOrders`.
+
+- **Actief of niet:** `GetCurrentCouplingOrder` geeft de order alleen terug als het vertrekslot van de trein de vlag `Koppelen` heeft. Zonder vlag gedraagt de order zich als een gewone stop. Alles wat via die functie loopt, volgt daardoor vanzelf: aanrijden en koppelen, het seinbeeld, "Wacht op koppeling" in de statusbalk en de vlag "laatste koppeling mislukt" (§3.5).
+- **Vertrekslot van een trein** (`GetCouplingDispatchSlot`):
+  - *Staat de trein bij deze order te laden of te wachten:* dan is het slot dat hij bij aankomst heeft opgeëist bepalend, uit `dispatch_records`. Een record van een eerder bezoek telt niet mee. Het slot moet minstens `aankomst − max. vertraging` zijn, met `aankomst = nu − current_order_time`.
+  - *Rijdt de trein er nog heen:* dan wordt het slot voorspeld met `GetScheduledDispatchTime(schema, nu + resterende reistijd + wachttijd)`. De resterende reistijd is de dienstregelingsreistijd min `current_order_time`, minimaal 0.
+- **Partners:** twee treinen passen bij elkaar als beide de vlag hebben en `CouplingDispatchSlot::IsSameDeparture` waar is: zelfde station en zelfde vertrektijd. Voorlopig horen daar ook dezelfde orderlijst en hetzelfde schema bij. Voor aparte lijsten hoeft later alleen die laatste eis te vervallen.
+- **"Kan het vertrek halen":** een trein die te laat is voor het koppelslot, krijgt een later slot en koppelt dus niet. De wachtende trein vertrekt op zijn slot alleen (§3.2). Er wordt niet langer gewacht.
+- **Na het koppelen:** beide treinen hebben hetzelfde slot opgeëist, dus de combinatie vertrekt op dat slot.
+
+**Volgorde en splitsen:** het filter verandert de koppelmodus niet. De volgordecontrole (§3.1) en de `Splitsen`-order werken dus ongewijzigd. Een `Splitsen`-order doet niets bij een trein die niet gekoppeld rijdt.
+
+**Testopzet RS3** ("Friese Coupler", trein 30, gedeelde orderlijst, met één extra trein):
+
+- **Koppelslots in Sneek** (schema "Sneek > Leeuwarden", order 23): 08:32, 19:32 en 0:02. De korte ritten vertrekken uit Leeuwarden om 07:53, 18:53 en 23:23. De treinen uit Stavoren vertrekken daar om 08:00, 19:00 en 23:30.
+- **Extra vertrek:** 20:32 Sneek > Leeuwarden, voor de korte rit van 19:53.
+- **15:53 Leeuwarden met twee treinstellen:**
+  - koppelslot op order 3 (Leeuwarden, schema "Leeuwarden");
+  - de tweede trein krijgt extra slots in Remise en Opstel;
+  - `Splitsen` op order 11 (Sneek, heenreis);
+  - het voorste stel (de leider) rijdt door als de 16:19 naar Stavoren;
+  - het achterste stel gaat via conditionele orders ("leidt" / "gekoppeld") naar order 23 en keert als de 16:32 naar Leeuwarden.
+
 ## 4. Fysiek koppelen en splitsen
 
 ### 4.1 Volgorde in de keten en rijrichting
@@ -460,6 +500,19 @@ Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het voo
   - koppelen geweigerd: te lang, te veel stellen, of het stel zou nooit meer loskomen;
   - een combinatie rijdt een depot binnen.
 
+### 9.1 Vertrekbord bij gekoppelde vertrekken (fase 6)
+
+Een combinatie, of twee treinen die volgens de voorspelling in hetzelfde koppelslot vertrekken, staat als **één regel** op het bord. De andere regel vervalt.
+
+- **Hele rit samen:** de combinatie rijdt in zijn geheel naar de eindbestemming. Dan toont het bord de regel alsof het één trein is.
+- **Splitst naar twee bestemmingen:**
+  - bestemming: `Splitsingsstation > Doel voorste trein / Doel achterste trein`;
+  - stops: de gezamenlijke stops tot en met het splitsingsstation, daarna `voorste deel: …` en `achterste deel: …`;
+  - "voorste" en "achterste" gaan over de fysieke delen na het splitsen (§4.4a).
+- **Splitst, maar één stel blijft staan:** het bord toont de bestemming van het stel dat doorrijdt, met de opmerking "Achterste (of Voorste) treinstel rijdt niet verder dan *Splitsingsstation*".
+  - Een stel **blijft staan** als zijn volgende stationsorder na het splitsen weer bij het splitsingsstation is. Tussenliggende depot-, waypoint- en conditionele orders tellen niet mee.
+  - Afrangeren naar een depot en later terugkomen om te koppelen telt dus ook als "blijft staan".
+
 ## 10. Risico's
 
 | Gebied | Risico | Maatregel |
@@ -479,6 +532,7 @@ Stap A geeft elk stel zijn eigen lading, linkgraph, opbrengst en kosten. Het voo
 3. **Fase 3 – orders:** de vlaggen, de depotvlag en de meldingen, `CheckOrders`, de conditionele variabele, de GUI en de JSON-export van orders. *Gebouwd.* Nog niet gedaan: een melding bij "alle voertuigen naar depot" vanuit een voertuiglijst, en de volgordecontrole bij het invoegen van de orders van een ander voertuig.
 4. **Fase 4 – dienstregeling en cargo:** gespiegelde orders, de tick en vertraging van het record, scheduled dispatch, vertrekborden, `next_station` per stel, overstappen in de trein, de linkgraph en de opbrengst per stel. *Gebouwd:* de dienstregeling van het passieve stel (§3.4a), vertrekborden, het eigen venster en de groep van het passieve stel, en de gespiegelde orders (§9). Daarna gebouwd: lading per stel, stap A en B (§7.2a, §7.2b).
 5. **Fase 5 – seinbeeld:** knipperende seinen, de recolour-sprites, de groen-geel-variant en de NewGRF-bit 25 met documentatie in `newgrf-additions.html`.
+6. **Fase 6 – koppelslot:** de slotvlag "Koppelen", het partnerfilter "Zelfde vertrekslot" (§3.8) en het samengevoegde vertrekbord (§9.1).
 
 **Testscenario's:**
 
