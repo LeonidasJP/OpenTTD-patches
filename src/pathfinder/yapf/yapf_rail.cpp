@@ -147,7 +147,10 @@ private:
 			Train *v = const_cast<Train *>(Yapf().GetVehicle());
 
 			/* Only pass the signal into the platform with at most the coupling speed. */
-			if (v->cur_speed > _settings_game.vehicle.train_coupling_speed) return false;
+			if (v->cur_speed > _settings_game.vehicle.train_coupling_speed) {
+				Debug(misc, 2, "Train coupling: train {} is too fast to enter the coupling platform", v->unitnumber);
+				return false;
+			}
 
 			/* Only one train may drive into the platform to couple to the waiting train. */
 			const Train *target = Train::GetIfValid(v->coupling_target);
@@ -163,10 +166,13 @@ private:
 				if (HasStationReservation(t)) {
 					if (this->IsCouplingTargetOnTile(t)) break;
 
-					/* The train to couple to may have reserved the complete platform when it arrived. */
-					if (GetTrainForReservation(t, GetRailStationTrack(t)) == Train::GetIfValid(v->coupling_target)) continue;
+					/* The train to couple to may have reserved the complete platform when it arrived.
+					 * Our own path up to the platform is already reserved and connects to that reservation, so the reservation may also lead to our train. */
+					const Train *owner = GetTrainForReservation(t, GetRailStationTrack(t));
+					if (owner != nullptr && (owner == Train::GetIfValid(v->coupling_target) || owner == v)) continue;
 
 					/* Reserved by another train, undo our part of the platform reservation. */
+					Debug(misc, 2, "Train coupling: train {} can't enter the coupling platform, {}x{} is reserved by another train", v->unitnumber, TileX(t), TileY(t));
 					for (TileIndex u : reserved_tiles) {
 						SetRailStationReservation(u, false);
 						MarkTileDirtyByTile(u, VMDF_NOT_MAP_MODE);
@@ -322,6 +328,10 @@ public:
 		PBSWaitingPositionRestrictedSignalState restricted_signal_state;
 		restricted_signal_state.defer_test_if_slot_conditional = true;
 		const bool coupling_target = IsRailStationTile(this->res_dest_tile) && this->IsCouplingPlatformTile(this->res_dest_tile);
+		if (Yapf().GetVehicle()->coupling_target != VehicleID::Invalid()) {
+			Debug(misc, 2, "Train coupling: train {} tries to reserve up to {}x{}, coupling platform {}", Yapf().GetVehicle()->unitnumber,
+					TileX(this->res_dest_tile), TileY(this->res_dest_tile), coupling_target);
+		}
 		if (!coupling_target && !IsWaitingPositionFree(Yapf().GetVehicle(), this->res_dest_tile, this->res_dest_td, false, &restricted_signal_state)) return false;
 
 		/* The temporary slot state only needs to be pushed to the stack (i.e. activated) on first use */
