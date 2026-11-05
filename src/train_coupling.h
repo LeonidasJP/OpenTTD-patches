@@ -18,6 +18,7 @@
 #include "station_type.h"
 #include "order_type.h"
 #include "cargo_type.h"
+#include "date_type.h"
 #include <optional>
 #include <vector>
 #include "3rdparty/cpp-btree/btree_map.h"
@@ -72,6 +73,29 @@ enum class OrderCouplingMode : uint8_t;
 bool IsCouplingOrderSequenceValid(const OrderList *list, uint index, OrderCouplingMode new_mode, bool insert = false, bool cyclic = false);
 bool IsCouplingFilterDefined(const Order *order);
 const Order *GetCurrentCouplingOrder(const Train *v);
+
+/** The scheduled dispatch departure of a train at a station order, see OrderCouplingFilter::DispatchSlot. */
+struct CouplingDispatchSlot {
+	const OrderList *order_list = nullptr; ///< Order list of the dispatch schedule.
+	uint schedule_index = 0;               ///< Index of the dispatch schedule in the order list.
+	StationID station = StationID::Invalid(); ///< Station of the order.
+	StateTicks departure{};                ///< Departure time of the slot.
+	bool coupling = false;                 ///< The slot is a coupling slot (DispatchSlot::SDSF_COUPLE).
+
+	/**
+	 * Do both trains depart in the same slot?
+	 * For now both trains must share the order list and the dispatch schedule.
+	 * Trains with separate order lists could be allowed later by only comparing the station and the departure time.
+	 */
+	bool IsSameDeparture(const CouplingDispatchSlot &other) const
+	{
+		return this->station == other.station && this->departure == other.departure &&
+				this->order_list == other.order_list && this->schedule_index == other.schedule_index;
+	}
+};
+
+std::optional<CouplingDispatchSlot> GetCouplingDispatchSlot(const Train *v, const Order *order);
+std::optional<std::pair<StateTicks, int>> GetCouplingArrivalDispatchSlot(const Vehicle *v, uint schedule_index);
 void UpdateCouplingApproachFromOrders(Train *v);
 void OnCombinationEnteredStation(Train *head, StationID station);
 void OnCombinationLeavingStation(Train *head);
@@ -116,6 +140,8 @@ struct CouplingSplitStagingScope {
 
 Train *GetCouplingApproachTarget(const Train *v);
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile);
+bool IsTrainPlatformTile(const Train *target, TileIndex tile);
+const Train *FindCouplingPartner(const Train *v);
 std::optional<int> GetCouplingStopLocation(const Train *v, DiagDirection dir);
 std::optional<int> GetCouplingStopDistance(const Train *v);
 bool IsTrainBeingApproachedForCoupling(const Train *target);

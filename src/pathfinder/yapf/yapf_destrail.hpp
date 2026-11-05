@@ -127,7 +127,7 @@ protected:
 	TrackdirBits dest_trackdirs;
 	StationID dest_station_id;
 	bool any_depot;
-	const Train *coupling_vehicle; ///< Train which drives to its coupling target in the destination station, if any.
+	const Train *coupling_partner; ///< Train waiting in the destination station to which our train drives to couple, if any.
 
 	/** @copydoc CYapfBaseT::Yapf */
 	Tpf &Yapf()
@@ -139,7 +139,7 @@ public:
 	void SetDestination(const Train *v)
 	{
 		this->any_depot = false;
-		this->coupling_vehicle = nullptr;
+		this->coupling_partner = nullptr;
 		switch (v->current_order.GetType()) {
 			case OT_GOTO_WAYPOINT:
 				if (!Waypoint::Get(v->current_order.GetDestination().ToStationID())->IsSingleTile()) {
@@ -156,9 +156,10 @@ public:
 				this->dest_tile = CalcClosestStationTile(v->current_order.GetDestination().ToStationID(), v->GetMovingFront()->tile, v->current_order.IsType(OT_GOTO_STATION) ? StationType::Rail : StationType::RailWaypoint);
 				this->dest_station_id = v->current_order.GetDestination().ToStationID();
 				this->dest_trackdirs = INVALID_TRACKDIR_BIT;
-				if (v->coupling_target != VehicleID::Invalid() && v->current_order.IsType(OT_GOTO_STATION) && GetCouplingApproachTarget(v) != nullptr) {
-					/* Only the platform with the train to couple to is a destination. */
-					this->coupling_vehicle = v;
+				if (v->current_order.IsType(OT_GOTO_STATION)) {
+					/* Only the platform with the train to couple to is a destination.
+					 * The partner is also used before the train chose it as its coupling target, so the path does not end in another platform. */
+					this->coupling_partner = v->coupling_target != VehicleID::Invalid() ? GetCouplingApproachTarget(v) : FindCouplingPartner(v);
 				}
 				break;
 
@@ -190,7 +191,7 @@ public:
 			return HasStationTileRail(tile)
 				&& (GetStationIndex(tile) == this->dest_station_id)
 				&& (GetRailStationTrack(tile) == TrackdirToTrack(td))
-				&& (this->coupling_vehicle == nullptr || IsCouplingApproachPlatformTile(this->coupling_vehicle, tile));
+				&& (this->coupling_partner == nullptr || IsTrainPlatformTile(this->coupling_partner, tile));
 		}
 
 		if (this->any_depot) {

@@ -50,7 +50,8 @@ NLOHMANN_JSON_SERIALIZE_ENUM(OrderCouplingFilter, {
 	{OrderCouplingFilter::End, nullptr},
 	{OrderCouplingFilter::Any, "any"},
 	{OrderCouplingFilter::Group, "group"},
-	{OrderCouplingFilter::OrderList, "order-list"}
+	{OrderCouplingFilter::OrderList, "order-list"},
+	{OrderCouplingFilter::DispatchSlot, "dispatch-slot"}
 })
 
 NLOHMANN_JSON_SERIALIZE_ENUM(OrderLabelSubType, {

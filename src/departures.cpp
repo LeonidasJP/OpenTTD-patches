@@ -324,7 +324,7 @@ static bool VehicleSetNextDepartureTime(Ticks *previous_departure, Ticks *waitin
 						/* Make sure the slots has not already been used previously in this departure board calculation */
 						if (slot_cache.used.count(current_departure) > 0) {
 							/* Allow re-use of this slot if it's the last seen */
-							if (HasBit(slot.flags, DispatchSlot::SDSF_REUSE_SLOT) && *slot_cache.used.rbegin() == current_departure) break;
+							if (slot.IsReusable() && *slot_cache.used.rbegin() == current_departure) break;
 						} else if (!skip_missed || slot_cache.missed.count(current_departure) == 0) {
 							break;
 						}

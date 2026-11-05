@@ -25,6 +25,7 @@
 #include "station_map.h"
 #include "texteff.hpp"
 #include "timetable.h"
+#include "schdispatch.h"
 #include "economy_func.h"
 #include "vehicle_func.h"
 #include "cargopacket.h"
@@ -384,6 +385,8 @@ static void AdvanceCoupledPassiveOrders(Train *passive)
  */
 void CoupleTrains(Train *waiting, Train *arriving, bool arriving_leads)
 {
+	Debug(misc, 1, "Train coupling: train {} couples to waiting train {} at station {}, {} leads", arriving->unitnumber, waiting->unitnumber,
+			waiting->last_station_visited, arriving_leads ? "arriving" : "waiting");
 	CouplingArrangement arrangement = FindCouplingArrangement(waiting, arriving);
 	assert(arrangement.first != nullptr);
 
@@ -570,6 +573,7 @@ CommandCost CheckCanSplitCombination(const Train *head)
  */
 Train *SplitCombination(Train *head, std::optional<bool> leader_on_second)
 {
+	Debug(misc, 1, "Train coupling: combination of train {} splits at station {}", head->unitnumber, head->last_station_visited);
 	auto it = _train_couplings.find(head->index);
 	assert(it != _train_couplings.end());
 	const TrainCoupling tc = it->second;
@@ -740,7 +744,97 @@ const Order *GetCurrentCouplingOrder(const Train *v)
 	const Order *order = v->GetOrder(v->cur_real_order_index);
 	if (order == nullptr || !order->IsType(OT_GOTO_STATION) || order->GetDestination() != station) return nullptr;
 	if (order->GetCouplingMode() == OrderCouplingMode::None) return nullptr;
+	if (order->GetCouplingMode() == OrderCouplingMode::Couple && order->GetCouplingFilter() == OrderCouplingFilter::DispatchSlot) {
+		/* The order only couples when the train departs in a coupling slot. */
+		std::optional<CouplingDispatchSlot> slot = GetCouplingDispatchSlot(v, order);
+		if (!slot.has_value() || !slot->coupling) return nullptr;
+	}
 	return order;
+}
+
+/**
+ * Get the dispatch slot which a train takes when it arrives at a dispatch order to couple to its partner in a coupling slot.
+ * Both trains depart in the slot of the partner, see OrderCouplingFilter::DispatchSlot.
+ * @param v The arriving vehicle.
+ * @param schedule_index The dispatch schedule of the order.
+ * @return The departure time and the index of the slot, or std::nullopt if the vehicle does not arrive to couple in a coupling slot.
+ */
+std::optional<std::pair<StateTicks, int>> GetCouplingArrivalDispatchSlot(const Vehicle *v, uint schedule_index)
+{
+	if (v->type != VehicleType::Train || v->orders == nullptr || schedule_index >= v->orders->GetScheduledDispatchScheduleCount()) return std::nullopt;
+	const Train *t = Train::From(v);
+	if (!t->flags.Test(VehicleRailFlag::CouplingFromOrders)) return std::nullopt;
+	const Train *target = GetCouplingApproachTarget(t);
+	if (target == nullptr || target->orders != t->orders) return std::nullopt;
+	const Order *target_order = GetCurrentCouplingOrder(target);
+	if (target_order == nullptr || target_order->GetCouplingFilter() != OrderCouplingFilter::DispatchSlot || !target_order->IsScheduledDispatchOrder(true) ||
+			static_cast<uint>(target_order->GetDispatchScheduleIndex()) != schedule_index) {
+		return std::nullopt;
+	}
+	std::optional<CouplingDispatchSlot> target_slot = GetCouplingDispatchSlot(target, target_order);
+	if (!target_slot.has_value() || !target_slot->coupling) return std::nullopt;
+
+	const DispatchSchedule &ds = t->orders->GetDispatchScheduleByIndex(schedule_index);
+	const LastDispatchRecord *record = GetVehicleLastDispatchRecord(target, schedule_index);
+	if (record == nullptr) return std::nullopt;
+	const std::vector<DispatchSlot> &slots = ds.GetScheduledDispatch();
+	for (size_t i = 0; i < slots.size(); i++) {
+		if (slots[i].offset == record->offset) return std::make_pair(target_slot->departure, static_cast<int>(i));
+	}
+	return std::nullopt;
+}
+
+/**
+ * Get the scheduled dispatch slot in which a train departs at a station order.
+ * A train which is loading or waiting at the order departs in the slot it took when it arrived.
+ * For a train which is still heading to the order, the slot is predicted from its timetable.
+ * @param v The train.
+ * @param order The station order, which must be the current order of the train.
+ * @return The slot, or std::nullopt if the order has no dispatch schedule or the train does not use scheduled dispatch.
+ */
+std::optional<CouplingDispatchSlot> GetCouplingDispatchSlot(const Train *v, const Order *order)
+{
+	if (v->orders == nullptr || !v->vehicle_flags.Test(VehicleFlag::ScheduledDispatch) || !order->IsScheduledDispatchOrder(true)) return std::nullopt;
+	const uint schedule_index = static_cast<uint>(order->GetDispatchScheduleIndex());
+	if (schedule_index >= v->orders->GetScheduledDispatchScheduleCount()) return std::nullopt;
+	const DispatchSchedule &ds = v->orders->GetDispatchScheduleByIndex(schedule_index);
+	if (!ds.IsScheduledDispatchValid() || ds.GetScheduledDispatch().empty()) return std::nullopt;
+
+	CouplingDispatchSlot result;
+	result.order_list = v->orders;
+	result.schedule_index = schedule_index;
+	result.station = order->GetDestination().ToStationID();
+
+	if (v->current_order.IsAnyLoadingType()) {
+		/* The slot was taken when the train arrived, see UpdateVehicleTimetable. */
+		const LastDispatchRecord *record = GetVehicleLastDispatchRecord(v, schedule_index);
+		if (record == nullptr) return std::nullopt;
+		/* Ignore the record of an earlier visit: the slot taken on arrival is at least the arrival time minus the maximum delay. */
+		const StateTicks arrival = _state_ticks - v->current_order_time;
+		if (record->dispatched + ds.GetScheduledDispatchDelay() < arrival) return std::nullopt;
+		result.departure = record->dispatched;
+		result.coupling = HasBit(record->slot_flags, DispatchSlot::SDSF_COUPLE);
+	} else {
+		/* A train which drives to its partner keeps the slot of that partner, even if the approach at coupling speed makes it late. */
+		if (v->flags.Test(VehicleRailFlag::CouplingFromOrders)) {
+			const Train *target = GetCouplingApproachTarget(v);
+			const Order *target_order = target != nullptr && target->current_order.IsAnyLoadingType() ? GetCurrentCouplingOrder(target) : nullptr;
+			if (target_order != nullptr && target_order->GetCouplingFilter() == OrderCouplingFilter::DispatchSlot) {
+				std::optional<CouplingDispatchSlot> target_slot = GetCouplingDispatchSlot(target, target_order);
+				if (target_slot.has_value() && target_slot->coupling && target_slot->order_list == result.order_list &&
+						target_slot->schedule_index == result.schedule_index && target_slot->station == result.station) {
+					return target_slot;
+				}
+			}
+		}
+
+		const Ticks remaining_travel = std::max<Ticks>(0, static_cast<Ticks>(order->GetTimetabledTravel()) - static_cast<Ticks>(v->current_order_time));
+		const auto [slot, slot_index] = GetScheduledDispatchTime(ds, _state_ticks + remaining_travel + order->GetTimetabledWait());
+		if (slot == INVALID_STATE_TICKS || slot_index < 0) return std::nullopt;
+		result.departure = slot;
+		result.coupling = HasBit(ds.GetScheduledDispatch()[slot_index].flags, DispatchSlot::SDSF_COUPLE);
+	}
+	return result;
 }
 
 /**
@@ -782,24 +876,35 @@ void ValidateTrainCouplings()
  * @param v The approaching train.
  * @return The target train, or nullptr if there is no valid target.
  */
-Train *GetCouplingApproachTarget(const Train *v)
+/**
+ * Can a train drive to another train to couple to it?
+ * @param v The approaching train.
+ * @param target The train to couple to.
+ * @return True if the target waits completely inside a platform of the station the approaching train is heading for.
+ */
+static bool IsValidCouplingApproachTarget(const Train *v, const Train *target)
 {
-	if (v->coupling_target == VehicleID::Invalid()) return nullptr;
-	Train *target = Train::GetIfValid(v->coupling_target);
-	if (target == nullptr || target == v || !target->IsFrontEngine() || target->owner != v->owner) return nullptr;
-	if (target->vehstatus.Test(VehState::Crashed) || v->vehstatus.Test(VehState::Crashed)) return nullptr;
-	if (IsTrainCoupled(target) || IsTrainCoupled(v)) return nullptr;
-	if (target->cur_speed != 0 || !IsRailStationTile(target->tile)) return nullptr;
-	if (!IsTrainCompletelyInStation(target, GetStationIndex(target->tile))) return nullptr;
+	if (target == nullptr || target == v || !target->IsFrontEngine() || target->owner != v->owner) return false;
+	if (target->vehstatus.Test(VehState::Crashed) || v->vehstatus.Test(VehState::Crashed)) return false;
+	if (IsTrainCoupled(target) || IsTrainCoupled(v)) return false;
+	if (target->cur_speed != 0 || !IsRailStationTile(target->tile)) return false;
+	if (!IsTrainCompletelyInStation(target, GetStationIndex(target->tile))) return false;
 
 	/* The approaching train must be heading for the station of the target. */
 	const StationID station = GetStationIndex(target->tile);
 	if (v->current_order.IsType(OT_GOTO_STATION)) {
-		if (v->current_order.GetDestination() != station) return nullptr;
+		if (v->current_order.GetDestination() != station) return false;
 	} else if (!v->current_order.IsAnyLoadingType() || v->last_station_visited != station) {
-		return nullptr;
+		return false;
 	}
-	return target;
+	return true;
+}
+
+Train *GetCouplingApproachTarget(const Train *v)
+{
+	if (v->coupling_target == VehicleID::Invalid()) return nullptr;
+	Train *target = Train::GetIfValid(v->coupling_target);
+	return IsValidCouplingApproachTarget(v, target) ? target : nullptr;
 }
 
 /**
@@ -810,7 +915,17 @@ Train *GetCouplingApproachTarget(const Train *v)
  */
 bool IsCouplingApproachPlatformTile(const Train *v, TileIndex tile)
 {
-	const Train *target = GetCouplingApproachTarget(v);
+	return IsTrainPlatformTile(GetCouplingApproachTarget(v), tile);
+}
+
+/**
+ * Is this tile part of the platform on which a train is waiting?
+ * @param target The waiting train, may be nullptr.
+ * @param tile The tile to check.
+ * @return True if the tile is part of the platform of the train.
+ */
+bool IsTrainPlatformTile(const Train *target, TileIndex tile)
+{
 	if (target == nullptr || !IsRailStationTile(tile) || !IsCompatibleTrainStationTile(tile, target->tile)) return false;
 
 	/* Walk along the platform from the tile to find the target. */
@@ -1041,11 +1156,13 @@ bool IsCouplingFilterDefined(const Order *order)
 
 /**
  * Does a train match the coupling filter of a couple order?
- * @param order The couple order.
- * @param t The train.
+ * @param order The couple order of the train \p self.
+ * @param self The train with the couple order.
+ * @param order_t The current couple order of the train \p t.
+ * @param t The other train.
  * @return True if the train may be coupled to.
  */
-static bool DoesTrainMatchCouplingFilter(const Order *order, const Train *t)
+static bool DoesTrainMatchCouplingFilter(const Order *order, const Train *self, const Order *order_t, const Train *t)
 {
 	/* An undefined filter allows any train, CheckOrders warns about it. */
 	if (!IsCouplingFilterDefined(order)) return true;
@@ -1055,14 +1172,48 @@ static bool DoesTrainMatchCouplingFilter(const Order *order, const Train *t)
 			return GroupIsInGroup(t->group_id, GroupID(order->GetCouplingFilterID()));
 		case OrderCouplingFilter::OrderList:
 			return t->orders != nullptr && t->orders->index == OrderListID(order->GetCouplingFilterID());
+		case OrderCouplingFilter::DispatchSlot: {
+			/* Both trains must depart in the same coupling slot. */
+			const std::optional<CouplingDispatchSlot> own_slot = GetCouplingDispatchSlot(self, order);
+			const std::optional<CouplingDispatchSlot> other_slot = GetCouplingDispatchSlot(t, order_t);
+			return own_slot.has_value() && other_slot.has_value() && own_slot->coupling && other_slot->coupling && own_slot->IsSameDeparture(*other_slot);
+		}
 		default:
 			return true;
 	}
 }
 
 /**
- * Find a partner to couple to for a train with a couple order, and drive to it.
+ * Find a partner to couple to for a train which heads for a station with a couple order.
  * The partner must be waiting at the station of the order, with a couple order for that station itself, and both trains must match each other's coupling filter.
+ * Only one train may drive to a waiting train to couple.
+ * @param v The train.
+ * @return The partner, or nullptr if there is none.
+ */
+const Train *FindCouplingPartner(const Train *v)
+{
+	if (!v->current_order.IsType(OT_GOTO_STATION) || IsTrainCoupled(v)) return nullptr;
+	const Order *order = GetCurrentCouplingOrder(v);
+	if (order == nullptr || order->GetCouplingMode() != OrderCouplingMode::Couple) return nullptr;
+
+	const Station *st = Station::GetIfValid(order->GetDestination().ToStationID());
+	if (st == nullptr) return nullptr;
+	for (const Vehicle *u : st->loading_vehicles) {
+		if (u->type != VehicleType::Train || u == v || !u->IsPrimaryVehicle() || u->owner != v->owner) continue;
+		const Train *partner = Train::From(u);
+		if (IsTrainCoupled(partner)) continue;
+		const Order *partner_order = GetCurrentCouplingOrder(partner);
+		if (partner_order == nullptr || partner_order->GetCouplingMode() != OrderCouplingMode::Couple) continue;
+		if (!DoesTrainMatchCouplingFilter(order, v, partner_order, partner) || !DoesTrainMatchCouplingFilter(partner_order, partner, order, v)) continue;
+		if (IsTrainCouplingTargetOfOtherTrain(partner, v, false)) continue;
+		if (!IsValidCouplingApproachTarget(v, partner)) continue;
+		return partner;
+	}
+	return nullptr;
+}
+
+/**
+ * Find a partner to couple to for a train with a couple order, and drive to it, see FindCouplingPartner.
  * @param v The train.
  */
 void UpdateCouplingApproachFromOrders(Train *v)
@@ -1076,36 +1227,24 @@ void UpdateCouplingApproachFromOrders(Train *v)
 		const Train *target = GetCouplingApproachTarget(v);
 		if (!couple || target == nullptr ||
 				(!IsValidDiagDirection(v->coupling_dir) && IsTrainCouplingTargetOfOtherTrain(target, v, true))) {
+			Debug(misc, 1, "Train coupling: train {} stops driving to train {} (couple order active: {})", v->unitnumber, target != nullptr ? target->unitnumber : 0, couple);
 			ClearCouplingApproach(v);
 		}
 	}
 	if (!couple || v->coupling_target != VehicleID::Invalid()) return;
 
-	/* Only search for a partner every few ticks. */
+	/* Only search for a partner every few ticks. The pathfinder already uses the partner before then, see FindCouplingPartner. */
 	if ((v->tick_counter & 7) != 0) return;
 
-	const Station *st = Station::GetIfValid(order->GetDestination().ToStationID());
-	if (st == nullptr) return;
-	for (const Vehicle *u : st->loading_vehicles) {
-		if (u->type != VehicleType::Train || u == v || !u->IsPrimaryVehicle() || u->owner != v->owner) continue;
-		const Train *partner = Train::From(u);
-		if (IsTrainCoupled(partner)) continue;
-		const Order *partner_order = GetCurrentCouplingOrder(partner);
-		if (partner_order == nullptr || partner_order->GetCouplingMode() != OrderCouplingMode::Couple) continue;
-		if (!DoesTrainMatchCouplingFilter(order, partner) || !DoesTrainMatchCouplingFilter(partner_order, v)) continue;
-		/* Only one train may drive to a waiting train to couple. */
-		if (IsTrainCouplingTargetOfOtherTrain(partner, v, false)) continue;
+	const Train *partner = FindCouplingPartner(v);
+	if (partner == nullptr) return;
 
-		v->coupling_target = partner->index;
-		v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, order->IsCouplingArrivingLeads());
-		v->flags.Set(VehicleRailFlag::CouplingFromOrders);
-		if (GetCouplingApproachTarget(v) == partner) {
-			ReleaseCouplingTargetReservation(Train::Get(partner->index));
-			SetWindowDirty(WindowClass::VehicleView, v->index);
-			return;
-		}
-		ClearCouplingApproach(v);
-	}
+	Debug(misc, 1, "Train coupling: train {} drives to train {} to couple at station {}", v->unitnumber, partner->unitnumber, order->GetDestination().base());
+	v->coupling_target = partner->index;
+	v->flags.Set(VehicleRailFlag::CouplingArrivingLeads, order->IsCouplingArrivingLeads());
+	v->flags.Set(VehicleRailFlag::CouplingFromOrders);
+	ReleaseCouplingTargetReservation(Train::Get(partner->index));
+	SetWindowDirty(WindowClass::VehicleView, v->index);
 }
 
 /** Combinations which split after this tick, and whether the leading train then continues with the second part. */

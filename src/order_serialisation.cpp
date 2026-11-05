@@ -72,6 +72,7 @@ struct OrderSerialisationFieldNames {
 			static constexpr char TAGS[]        = "tags";        ///< array<int>
 			static constexpr char ROUTE[]       = "route";       ///< int
 			static constexpr char RE_USE_SLOT[] = "re-use-slot"; ///< bool
+			static constexpr char COUPLING[] = "coupling";       ///< bool
 		};
 
 		static constexpr char DURATION[]            = "duration";            ///< int     Required
@@ -464,6 +465,10 @@ static nlohmann::ordered_json DispatchScheduleToJSON(const DispatchSchedule &sd)
 	for (const auto &sd_slot : sd.GetScheduledDispatch()) {
 		if (HasBit(sd_slot.flags, DispatchSlot::SDSF_REUSE_SLOT)) {
 			slot_object[SFName::Slots::RE_USE_SLOT] = true;
+		}
+
+		if (HasBit(sd_slot.flags, DispatchSlot::SDSF_COUPLE)) {
+			slot_object[SFName::Slots::COUPLING] = true;
 		}
 
 		for (uint i = 0; i <= (DispatchSlot::SDSF_LAST_TAG - DispatchSlot::SDSF_FIRST_TAG); i++) {
@@ -1398,9 +1403,15 @@ static void ImportJsonDispatchSchedule(JSONToVehicleCommandParser<JSONToVehicleM
 					bool re_use_slot = false;
 					local_importer.TryGetField(SFName::Slots::RE_USE_SLOT, re_use_slot, JOIET_MAJOR);
 
+					bool coupling_slot = false;
+					local_importer.TryGetField(SFName::Slots::COUPLING, coupling_slot, JOIET_MINOR);
+
 					uint16_t flags = 0;
 					if (re_use_slot) {
 						SetBit(flags, DispatchSlot::SDSF_REUSE_SLOT);
+					}
+					if (coupling_slot) {
+						SetBit(flags, DispatchSlot::SDSF_COUPLE);
 					}
 
 					if (auto it = slot_data.find(SFName::Slots::TAGS); it != slot_data.end() && it->is_array()) {

@@ -1932,10 +1932,12 @@ STR_ORDER_COUPLING_LEADER_ARRIVING                              :Coupling: arriv
 STR_ORDER_COUPLING_FILTER_ANY                                   :Couple to: any train
 STR_ORDER_COUPLING_FILTER_GROUP                                 :Couple to: train in group...
 STR_ORDER_COUPLING_FILTER_ORDERLIST                             :Couple to: train with orders of...
+STR_ORDER_COUPLING_FILTER_DISPATCH_SLOT                         :Couple to: train in the same coupling departure slot
 STR_ORDER_COUPLING_SPLIT                                        :{SPACE}[split]
 STR_ORDER_COUPLING_SPLIT_FRONT                                  :{SPACE}[split, continue as front part]
 STR_ORDER_COUPLING_SPLIT_REAR                                   :{SPACE}[split, continue as rear part]
 STR_ORDER_COUPLING_COUPLE_ANY                                   :{SPACE}[couple: any train{STRING}]
+STR_ORDER_COUPLING_COUPLE_DISPATCH_SLOT                         :{SPACE}[couple: same coupling departure slot{STRING}]
 STR_ORDER_COUPLING_COUPLE_GROUP                                 :{SPACE}[couple: group {GROUP}{STRING}]
 STR_ORDER_COUPLING_COUPLE_ORDERLIST                             :{SPACE}[couple: orders of {VEHICLE}{STRING}]
 STR_ORDER_COUPLING_COUPLE_UNDEFINED                             :{SPACE}[couple: {PUSH_COLOUR}{RED}undefined{POP_COLOUR}{STRING}]
@@ -2389,6 +2391,9 @@ STR_SCHDISPATCH_ROUTE_DEPARTURE_TOOLTIP                         :{BLACK}Set the 
 STR_SCHDISPATCH_MANAGE_SLOT                                     :{BLACK}Manage Slot
 STR_SCHDISPATCH_REUSE_THIS_DEPARTURE_SLOT                       :Re-use departure slot
 STR_SCHDISPATCH_REUSE_THIS_DEPARTURE_SLOT_TOOLTIP               :{BLACK}Set whether the selected departure slot may be used more than once.
+STR_SCHDISPATCH_COUPLE_THIS_DEPARTURE_SLOT                      :Couple at this departure
+STR_SCHDISPATCH_COUPLE_DEPARTURE_SLOT_SHORT                     :Couple
+STR_SCHDISPATCH_SLOT_TOOLTIP_COUPLE                             :{}Trains departing in this slot couple (couple orders with 'same coupling departure slot')
 STR_SCHDISPATCH_TAG_DEPARTURE                                   :Tag {NUM}
 STR_SCHDISPATCH_TAG_DEPARTURE_NAMED                             :Tag {NUM}: {RAW_STRING}
 STR_SCHDISPATCH_ROUTE                                           :Route ID: {RAW_STRING}
@@ -2609,6 +2614,7 @@ STR_WARNING_TRAIN_COUPLING_DEPOT_STOP_DETAIL                    :{WHITE}The coup
 STR_NEWS_TRAIN_COUPLED_COMBINATION_IN_DEPOT                     :{WHITE}Coupled combination {VEHICLE} stopped in a depot
 STR_NEWS_VEHICLE_COUPLING_ORDER_SEQUENCE                        :{WHITE}{VEHICLE} has two couple orders without a split order in between
 STR_NEWS_VEHICLE_COUPLING_FILTER_UNDEFINED                      :{WHITE}{VEHICLE} has a couple order with a deleted group or order list
+STR_NEWS_VEHICLE_COUPLING_SLOT_NO_SCHEDULE                      :{WHITE}{VEHICLE} has a couple order for the same departure slot without scheduled dispatch
 STR_TRAIN_COUPLING_DEPOT_QUERY_CAPTION                          :{WHITE}Send coupled combination to depot
 STR_TRAIN_COUPLING_DEPOT_QUERY                                  :{YELLOW}This train is coupled to another train. Send the coupled combination to a depot to stop there?
 
