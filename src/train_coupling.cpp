@@ -14,6 +14,7 @@
 #include "command_func.h"
 #include "company_base.h"
 #include "company_func.h"
+#include "debug.h"
 #include "economy_base.h"
 #include "group.h"
 #include "station_base.h"
