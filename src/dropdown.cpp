@@ -192,6 +192,10 @@ struct DropdownWindow : Window {
 
 		this->parent_wnd_token = parent->GetWindowToken();
 
+		/* Only select by releasing the mouse button when the list was opened with the button held down.
+		 * A list opened from another dropdown's selection would otherwise immediately select the item under the cursor. */
+		this->drag_mode = _left_button_down;
+
 		this->CreateNestedTree();
 
 		this->GetWidget<NWidgetStacked>(WID_DM_FILTER_SEL)->SetDisplayedPlane(this->options.Test(DropDownOption::Filterable) ? 0 : SZSP_HORIZONTAL);
