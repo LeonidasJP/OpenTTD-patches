@@ -536,6 +536,7 @@ STR_CONFIG_SETTING_ERRMSG_DURATION_HELPTEXT                     :लाल व�
 
 
 
+
 ###length 4
 
 ###length 4
@@ -1353,7 +1354,8 @@ STR_VEHICLE_DETAILS_TRAIN_ENGINE_BUILT_AND_VALUE                :{LTBLUE}{ENGINE
 
 
 
-STR_VEHICLE_DETAIL_TAB_CAPACITIES                               :{BLACK}क्षमता
+
+
 
 
 # Vehicle refit

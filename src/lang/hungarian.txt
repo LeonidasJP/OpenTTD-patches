@@ -1688,6 +1688,7 @@ STR_CONFIG_SETTING_TERRAIN_TYPE_HELPTEXT                        :A dombok és he
 STR_CONFIG_SETTING_INDUSTRY_DENSITY                             :Gazdasági épületek száma: {STRING}
 STR_CONFIG_SETTING_INDUSTRY_DENSITY_HELPTEXT                    :Mennyi gazdasági épület legyen, és mennyire legyenek fenntartva a játék folyamán
 
+
 STR_CONFIG_SETTING_OIL_REF_EDGE_DISTANCE                        :Olajfinomítók és olajfúró tornyok maximális távolsága a térkép szélétől: {STRING}
 STR_CONFIG_SETTING_OIL_REF_EDGE_DISTANCE_HELPTEXT               :Megadhatod, hogy a térkép szélétől milyen messze épülhetnek olajfinomítók és olajfúró tornyok. Sziget jellegű térképek esetén így a part közelében fognak épülni. 256 mezőnél szélesebb, ill. hosszabb térképek esetén ez az érték felszorzódik.
 
@@ -3239,21 +3240,20 @@ STR_FUND_INDUSTRY_REMOVE_ALL_INDUSTRIES_CAPTION                 :{WHITE}Összes 
 STR_FUND_INDUSTRY_REMOVE_ALL_INDUSTRIES_QUERY                   :{YELLOW}Biztosan el akarod távolítani az összes gazdasági épületet?
 
 # Industry cargoes window
-STR_INDUSTRY_CARGOES_INDUSTRY_CAPTION                           :{WHITE}Ipari láncolat - {STRING}
-STR_INDUSTRY_CARGOES_CARGO_CAPTION                              :{WHITE}Ipari láncolat - {STRING}
-STR_INDUSTRY_CARGOES_PRODUCERS                                  :{WHITE}Termelő gazdasági épületek
-STR_INDUSTRY_CARGOES_CUSTOMERS                                  :{WHITE}Elfogadó gazdasági épületek
-STR_INDUSTRY_CARGOES_HOUSES                                     :{WHITE}Házak
-STR_INDUSTRY_CARGOES_INDUSTRY_TOOLTIP                           :{BLACK}Kattints a gazdasági épületre az ellátók és a fogyasztók megjelenítéséhez
-STR_INDUSTRY_CARGOES_CARGO_TOOLTIP                              :{BLACK}{STRING}{}Kattints a rakományra az ellátók és a fogyasztók megjelenítéséhez.
-STR_INDUSTRY_DISPLAY_CHAIN                                      :{BLACK}Ipari láncolat
-STR_INDUSTRY_DISPLAY_CHAIN_TOOLTIP                              :{BLACK}Rakományellátó és fogyasztó gazdasági épületek megjelenítése
-STR_INDUSTRY_CARGOES_NOTIFY_SMALLMAP                            :{BLACK}Térképre kapcsolás
-STR_INDUSTRY_CARGOES_NOTIFY_SMALLMAP_TOOLTIP                    :{BLACK}A térképen megjelenített gazdasági épületek kiválasztása
-STR_INDUSTRY_CARGOES_SELECT_CARGO                               :{BLACK}Szállítmánytípus kiválasztása
-STR_INDUSTRY_CARGOES_SELECT_CARGO_TOOLTIP                       :{BLACK}Válaszd ki a szállítmány típust amit meg akarsz jeleníteni
-STR_INDUSTRY_CARGOES_SELECT_INDUSTRY                            :{BLACK}Iparág választás
-STR_INDUSTRY_CARGOES_SELECT_INDUSTRY_TOOLTIP                    :{BLACK}Válaszd ki az iparágat amit meg akarsz jeleníteni
+STR_INDUSTRY_CARGOES_INDUSTRY_CAPTION                           :Ipari láncolat - {STRING}
+STR_INDUSTRY_CARGOES_CARGO_CAPTION                              :Ipari láncolat - {STRING}
+STR_INDUSTRY_CARGOES_SOURCES                                    :Források
+STR_INDUSTRY_CARGOES_DESTINATIONS                               :Célok
+STR_INDUSTRY_CARGOES_HOUSES                                     :Házak
+STR_INDUSTRY_CARGOES_ACCEPTS_PRODUCES_TOOLTIP                   :{STRING}{}Elfogad: {CARGO_LIST}{}Előállít: {CARGO_LIST}
+STR_INDUSTRY_DISPLAY_CHAIN                                      :Ipari láncolat
+STR_INDUSTRY_DISPLAY_CHAIN_TOOLTIP                              :Rakományellátó és fogyasztó gazdasági épületek megjelenítése
+STR_INDUSTRY_CARGOES_NOTIFY_SMALLMAP                            :{BLACK}Kistérképhez kötés
+STR_INDUSTRY_CARGOES_NOTIFY_SMALLMAP_TOOLTIP                    :A térképen megjelenített gazdasági épületek kiválasztása a kistérképen is
+STR_INDUSTRY_CARGOES_SELECT_CARGO                               :Szállítmánytípus kiválasztása
+STR_INDUSTRY_CARGOES_SELECT_CARGO_TOOLTIP                       :Válaszd ki a szállítmány típust amit meg akarsz jeleníteni
+STR_INDUSTRY_CARGOES_SELECT_INDUSTRY                            :Iparág választás
+STR_INDUSTRY_CARGOES_SELECT_INDUSTRY_TOOLTIP                    :Válaszd ki az iparágat amit meg akarsz jeleníteni
 
 # Land area window
 STR_LAND_AREA_INFORMATION_CAPTION                               :{WHITE}Területinformáció
@@ -4688,9 +4688,7 @@ STR_VEHICLE_INFO_PROFIT_THIS_PERIOD_LAST_PERIOD_MIN_PERFORMANCE :{BLACK}Nyeresé
 STR_VEHICLE_INFO_RELIABILITY_BREAKDOWNS                         :{BLACK}Megbízhatóság: {LTBLUE}{COMMA}% (max: {COMMA}%) {BLACK}Lerobbanások az utolsó javítás óta: {LTBLUE}{COMMA}
 
 STR_VEHICLE_INFO_BUILT_VALUE                                    :{LTBLUE}{ENGINE} {BLACK}Vásárlás éve: {LTBLUE}{NUM}{BLACK} Érték: {LTBLUE}{CURRENCY_LONG}
-STR_VEHICLE_INFO_NO_CAPACITY                                    :{BLACK}Kapacitás: {LTBLUE}Nincs{STRING}
 STR_VEHICLE_INFO_CAPACITY                                       :{BLACK}Kapacitás: {LTBLUE}{CARGO_LONG}{STRING}
-STR_VEHICLE_INFO_CAPACITY_MULT                                  :{BLACK}Kapacitás: {LTBLUE}{CARGO_LONG}{STRING} (x{NUM})
 STR_VEHICLE_INFO_CAPACITY_CAPACITY                              :{BLACK}Kapacitás: {LTBLUE}{CARGO_LONG}, {CARGO_LONG}{STRING}
 
 STR_VEHICLE_INFO_FEEDER_CARGO_VALUE                             :{BLACK}Szállítási díj: {LTBLUE}{CURRENCY_LONG}
@@ -4723,22 +4721,23 @@ STR_QUERY_RENAME_AIRCRAFT_CAPTION                               :{WHITE}Repülő
 STR_VEHICLE_DETAILS_TRAIN_ENGINE_BUILT_AND_VALUE                :{LTBLUE}{ENGINE}{BLACK} Vásárlás éve: {LTBLUE}{NUM}{BLACK} Érték: {LTBLUE}{CURRENCY_LONG}
 STR_VEHICLE_DETAILS_TRAIN_WAGON_VALUE                           :{LTBLUE}{ENGINE}{BLACK}   Érték: {LTBLUE}{CURRENCY_LONG}
 
-STR_VEHICLE_DETAILS_TRAIN_TOTAL_CAPACITY_TEXT                   :{BLACK}Teljes szállítási kapacitása ennek a vonatnak:
+STR_VEHICLE_DETAILS_TRAIN_LENGTH                                :{BLACK}Vonat hossza: {LTBLUE}{DECIMAL} mező
+
+STR_VEHICLE_DETAILS_TRAIN_TOTAL_CAPACITY_TEXT                   :{BLACK}Teljes rakománya ennek a vonatnak:
 STR_VEHICLE_DETAILS_TRAIN_TOTAL_CAPACITY                        :{LTBLUE}{CARGO_LONG} ({CARGO_SHORT})
-STR_VEHICLE_DETAILS_TRAIN_TOTAL_CAPACITY_MULT                   :{LTBLUE}{CARGO_LONG} ({CARGO_SHORT}) (x{NUM})
+
+STR_VEHICLE_DETAILS_TRAIN_CARGO_EMPTY                           :{LTBLUE}Üres ({CARGO_LONG}){STRING}
+STR_VEHICLE_DETAILS_TRAIN_CARGO_FROM                            :{LTBLUE}{CARGO_LONG} ({CARGO_SHORT}) {STATION}{STRING} állomásról
 
 STR_VEHICLE_DETAILS_CARGO_EMPTY                                 :{LTBLUE}Üres
 STR_VEHICLE_DETAILS_CARGO_FROM                                  :{LTBLUE}{CARGO_LONG} {STATION} állomásról
-STR_VEHICLE_DETAILS_CARGO_FROM_MULT                             :{LTBLUE}{CARGO_LONG} {STATION} állomásról (x{NUM})
 
 STR_VEHICLE_DETAIL_TAB_CARGO                                    :{BLACK}Rakomány
 STR_VEHICLE_DETAILS_TRAIN_CARGO_TOOLTIP                         :{BLACK}A szállított rakomány részletei
 STR_VEHICLE_DETAIL_TAB_INFORMATION                              :{BLACK}Információ
 STR_VEHICLE_DETAILS_TRAIN_INFORMATION_TOOLTIP                   :{BLACK}A vonat kocsiainak részletei
-STR_VEHICLE_DETAIL_TAB_CAPACITIES                               :{BLACK}Kapacitás
-STR_VEHICLE_DETAILS_TRAIN_CAPACITIES_TOOLTIP                    :{BLACK}Az egyes kocsik kapacitása
-STR_VEHICLE_DETAIL_TAB_TOTAL_CARGO                              :{BLACK}Teljes rakomány
-STR_VEHICLE_DETAILS_TRAIN_TOTAL_CARGO_TOOLTIP                   :{BLACK}Megmutatja a vonat teljes kapacitását, rakománytípusokra lebontva
+STR_VEHICLE_DETAIL_TAB_TOTALS                                   :{BLACK}Összesen
+STR_VEHICLE_DETAILS_TRAIN_TOTALS_TOOLTIP                        :{BLACK}A vonat teljes rakományának, kapacitásának és hosszának megjelenítése
 
 STR_VEHICLE_DETAILS_TRAIN_ARTICULATED_RV_CAPACITY               :{BLACK}Kapacitás: {LTBLUE}{STRING}
 

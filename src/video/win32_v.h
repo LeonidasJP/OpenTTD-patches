@@ -19,7 +19,7 @@
 /** Base class for Windows video drivers. */
 class VideoDriver_Win32Base : public VideoDriver {
 public:
-	VideoDriver_Win32Base(bool uses_hardware_acceleration = false) : VideoDriver(uses_hardware_acceleration), main_wnd(nullptr), fullscreen(false), buffer_locked(false) {}
+	VideoDriver_Win32Base(bool uses_hardware_acceleration = false) : VideoDriver(uses_hardware_acceleration) {}
 
 	void Stop() override;
 
@@ -38,8 +38,8 @@ public:
 	std::vector<int> GetListOfMonitorRefreshRates() override;
 
 protected:
-	HWND main_wnd;          ///< Handle to system window.
-	bool fullscreen;        ///< Whether to use (true) fullscreen mode.
+	HWND main_wnd = nullptr; ///< Handle to system window.
+	bool fullscreen = false; ///< Whether to use (true) fullscreen mode.
 	bool has_focus = false; ///< Does our window have system focus?
 	Rect dirty_rect;        ///< Region of the screen that needs redrawing.
 	int width = 0;          ///< Width in pixels of our display surface.
@@ -47,7 +47,8 @@ protected:
 	int width_org = 0;      ///< Original monitor resolution width, before we changed it.
 	int height_org = 0;     ///< Original monitor resolution height, before we changed it.
 
-	bool buffer_locked;     ///< Video buffer was locked by the main thread.
+	bool buffer_locked = false; ///< Video buffer was locked by the main thread.
+	Palette local_palette; ///< Current palette to use for drawing.
 
 	Dimension GetScreenSize() const override;
 	void InputLoop() override;
@@ -56,7 +57,7 @@ protected:
 	void CheckPaletteAnim() override;
 	bool PollEvent() override;
 
-	const char *Initialize();
+	std::optional<std::string_view> Initialize();
 	bool MakeWindow(bool full_screen, bool resize = true);
 	void ClientSizeChanged(int w, int h, bool force = false);
 
@@ -86,6 +87,12 @@ protected:
 	 */
 	virtual void PaletteChanged(HWND hWnd) = 0;
 
+	/**
+	 * Whether minimising and restoring fullscreen windows uses ToggleFullscreen.
+	 * @return True if ToggleFullscreen should be used.
+	 */
+	virtual bool MinimiseRestoreWithToggleFullscreen() const { return false; }
+
 private:
 	friend LRESULT CALLBACK WndProcGdi(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 };
@@ -94,13 +101,13 @@ class VideoDriver_Win32GDI : public VideoDriver_Win32Base {
 public:
 	VideoDriver_Win32GDI() : dib_sect(nullptr), gdi_palette(nullptr), buffer_bits(nullptr) {}
 
-	const char *Start(const StringList &param) override;
+	std::optional<std::string_view> Start(const StringList &param) override;
 
 	void Stop() override;
 
 	bool AfterBlitterChange() override;
 
-	const char *GetName() const override { return "win32"; }
+	std::string_view GetName() const override { return "win32"; }
 
 protected:
 	HBITMAP  dib_sect;      ///< System bitmap object referencing our rendering buffer.
@@ -124,7 +131,7 @@ public:
 /** The factory for Windows' video driver. */
 class FVideoDriver_Win32GDI : public DriverFactoryBase {
 public:
-	FVideoDriver_Win32GDI() : DriverFactoryBase(Driver::Type::Video, 9, "win32", "Win32 GDI Video Driver") {}
+	FVideoDriver_Win32GDI() : DriverFactoryBase(Driver::Type::Video, 8, "win32", "Win32 GDI Video Driver") {}
 	std::unique_ptr<Driver> CreateInstance() const override { return std::make_unique<VideoDriver_Win32GDI>(); }
 };
 
@@ -133,9 +140,9 @@ public:
 /** The OpenGL video driver for windows. */
 class VideoDriver_Win32OpenGL : public VideoDriver_Win32Base {
 public:
-	VideoDriver_Win32OpenGL() : VideoDriver_Win32Base(true), dc(nullptr), gl_rc(nullptr), driver_info(this->GetName()) {}
+	VideoDriver_Win32OpenGL() : VideoDriver_Win32Base(true), driver_info(this->GetName()) {}
 
-	const char *Start(const StringList &param) override;
+	std::optional<std::string_view> Start(const StringList &param) override;
 
 	void Stop() override;
 
@@ -155,13 +162,13 @@ public:
 
 	void ToggleVsync(bool vsync) override;
 
-	const char *GetName() const override { return "win32-opengl"; }
+	std::string_view GetName() const override { return "win32-opengl"; }
 
-	const char *GetInfoString() const override { return this->driver_info.c_str(); }
+	std::string_view GetInfoString() const override { return this->driver_info; }
 
 protected:
-	HDC    dc;          ///< Window device context.
-	HGLRC  gl_rc;       ///< OpenGL context.
+	HDC dc = nullptr;        ///< Window device context.
+	HGLRC gl_rc = nullptr;   ///< OpenGL context.
 	std::string driver_info; ///< Information string about selected driver.
 
 	uint8_t GetFullscreenBpp() override { return 32; } // OpenGL is always 32 bpp.
@@ -173,14 +180,14 @@ protected:
 	void ReleaseVideoPointer() override;
 	void PaletteChanged(HWND) override {}
 
-	const char *AllocateContext();
+	std::optional<std::string_view> AllocateContext();
 	void DestroyContext();
 };
 
 /** The factory for Windows' OpenGL video driver. */
 class FVideoDriver_Win32OpenGL : public DriverFactoryBase {
 public:
-	FVideoDriver_Win32OpenGL() : DriverFactoryBase(Driver::Type::Video, 10, "win32-opengl", "Win32 OpenGL Video Driver") {}
+	FVideoDriver_Win32OpenGL() : DriverFactoryBase(Driver::Type::Video, 9, "win32-opengl", "Win32 OpenGL Video Driver") {}
 	std::unique_ptr<Driver> CreateInstance() const override { return std::make_unique<VideoDriver_Win32OpenGL>(); }
 
 protected:

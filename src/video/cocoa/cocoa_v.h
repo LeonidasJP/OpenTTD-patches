@@ -75,7 +75,7 @@ protected:
 
 	void GameSizeChanged();
 
-	const char *Initialize();
+	std::optional<std::string_view> Initialize();
 
 	void UpdateVideoModes();
 
@@ -119,10 +119,10 @@ public:
 
 	VideoDriver_CocoaQuartz();
 
-	const char *Start(const StringList &param) override;
+	std::optional<std::string_view> Start(const StringList &param) override;
 	void Stop() override;
 
-	const char *GetName() const override { return "cocoa"; }
+	std::string_view GetName() const override { return "cocoa"; }
 
 	void AllocateBackingStore(bool force = false) override;
 

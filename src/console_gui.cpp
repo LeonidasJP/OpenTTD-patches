@@ -60,10 +60,6 @@ struct IConsoleLine {
 			time(0)
 	{
 	}
-
-	~IConsoleLine()
-	{
-	}
 };
 
 /** The console backlog buffer. Item index 0 is the newest line. */
@@ -271,7 +267,7 @@ struct IConsoleWindow : Window
 				break;
 
 			default:
-				if (_iconsole_cmdline.HandleKeyPress(key, keycode) != HKPR_NOT_HANDLED) {
+				if (_iconsole_cmdline.HandleKeyPress(key, keycode) != HandleKeyPressResult::NotHandled) {
 					IConsoleWindow::scroll = 0;
 					IConsoleResetHistoryPos();
 					this->SetDirty();

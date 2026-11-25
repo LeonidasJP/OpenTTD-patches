@@ -25,9 +25,9 @@ public:
 	/**
 	 * Start this driver.
 	 * @param parm Parameters passed to the driver.
-	 * @return nullptr if everything went okay, otherwise an error message.
+	 * @return std::nullopt if everything went okay, otherwise an error message.
 	 */
-	virtual const char *Start(const StringList &parm) = 0;
+	virtual std::optional<std::string_view> Start(const StringList &parm) = 0;
 
 	/**
 	 * Stop this driver.
@@ -49,7 +49,7 @@ public:
 	 * Get the name of this driver.
 	 * @return The name of the driver.
 	 */
-	virtual const char *GetName() const = 0;
+	virtual std::string_view GetName() const = 0;
 };
 
 /** Base for all driver factories. */

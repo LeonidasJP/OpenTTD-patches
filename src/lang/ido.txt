@@ -667,6 +667,7 @@ STR_CONFIG_SETTING_PLANE_CRASHES_NORMAL                         :normala
 
 
 
+
 ###length 4
 
 ###length 4
@@ -1028,8 +1029,6 @@ STR_OBJECT_BUILD_SIZE                                           :{BLACK}Grandeso
 
 # Industry cargoes window
 STR_INDUSTRY_CARGOES_INDUSTRY_CAPTION                           :{WHITE}Industrio-kateno por {STRING} industrio
-STR_INDUSTRY_CARGOES_PRODUCERS                                  :{WHITE}Produktanta industrii
-STR_INDUSTRY_CARGOES_CUSTOMERS                                  :{WHITE}Aceptanta industrii
 STR_INDUSTRY_CARGOES_HOUSES                                     :{WHITE}Domi
 STR_INDUSTRY_DISPLAY_CHAIN                                      :{BLACK}Montras kateno
 STR_INDUSTRY_CARGOES_NOTIFY_SMALLMAP                            :{BLACK}Ligilo ad mapeto
@@ -1414,9 +1413,10 @@ STR_VEHICLE_COMMAND_STARTED                                     :{GREEN}Komencin
 
 
 
+
+
 STR_VEHICLE_DETAIL_TAB_CARGO                                    :{BLACK}Kargajo
 STR_VEHICLE_DETAIL_TAB_INFORMATION                              :{BLACK}Informo
-STR_VEHICLE_DETAIL_TAB_CAPACITIES                               :{BLACK}Kapacesi
 
 
 # Vehicle refit

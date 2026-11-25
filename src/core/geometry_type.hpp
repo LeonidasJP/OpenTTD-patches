@@ -107,23 +107,25 @@ using Point = Coord2D<int>;
 
 /** Dimensions (a width and height) of a rectangle in 2D */
 struct Dimension {
-	uint width;
-	uint height;
+	using value_type = uint32_t; ///< The type of the values; hack to make this look enough like a std::array for saving/loading resolutions
+	value_type width = 0; ///< The width of the rectangle.
+	value_type height = 0; ///< The height of the rectangle.
 
-	constexpr Dimension() : width(0), height(0) {}
-	constexpr Dimension(uint w, uint h) : width(w), height(h) {}
+	/** Create a 0x0 dimension. */
+	constexpr Dimension() = default;
 
-	bool operator< (const Dimension &other) const
-	{
-		int x = this->width - other.width;
-		if (x != 0) return x < 0;
-		return this->height < other.height;
-	}
+	/**
+	 * Create a dimension.
+	 * @param w The width.
+	 * @param h The height.
+	 */
+	constexpr Dimension(value_type w, value_type h) : width(w), height(h) {}
 
-	bool operator== (const Dimension &other) const
-	{
-		return this->width == other.width && this->height == other.height;
-	}
+	/**
+	 * Compare with another instance of this class.
+	 * @return The std::strong_ordering of the comparison.
+	 */
+	constexpr auto operator<=>(const Dimension &) const noexcept = default;
 };
 
 /** Padding dimensions to apply to each side of a Rect. */
@@ -303,6 +305,17 @@ struct Rect {
 	{
 		/* This is a local version of IsInsideMM, to avoid including math_func everywhere. */
 		return (uint)(pt.x - this->left) <= (uint)(this->right - this->left) && (uint)(pt.y - this->top) <= (uint)(this->bottom - this->top);
+	}
+
+	/**
+	 * Centre a horizontal dimension within this Rect.
+	 * @param width The horizontal dimension.
+	 * @return the new resized Rect.
+	 */
+	[[nodiscard]] inline Rect CentreToWidth(int width) const
+	{
+		int new_left = CentreBounds(this->left, this->right, width);
+		return {new_left, this->top, new_left + width - 1, this->bottom};
 	}
 
 	/**

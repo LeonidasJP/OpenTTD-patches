@@ -13,6 +13,7 @@
 #include "newgrf_bytereader.h"
 #include "newgrf_internal.h"
 #include "newgrf_stringmapping.h"
+#include "../cargotype.h"
 
 #include "../safeguards.h"
 
@@ -163,7 +164,7 @@ static ChangeInfoResult CargoReserveInfo(uint first, uint last, int prop, const 
 				break;
 
 			case 0x1A: // Bitmask of callbacks to use
-				cs->callback_mask = static_cast<CargoCallbackMasks>(buf.ReadByte());
+				cs->callback_mask = CargoCallbackMasks{buf.ReadByte()};
 				break;
 
 			case 0x1D: // Vehicle capacity multiplier

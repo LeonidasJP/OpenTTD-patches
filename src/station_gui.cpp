@@ -2161,6 +2161,7 @@ struct StationViewWindow : public Window {
 
 			case WID_SV_CATCHMENT:
 				SetViewportCatchmentStation(Station::Get(this->window_number), !this->IsWidgetLowered(WID_SV_CATCHMENT));
+				SndClickBeep();
 
 				if (w != nullptr && this->IsWidgetLowered(WID_SV_CATCHMENT)) {
 					if (w->parent->window_class == WindowClass::StationView && w->IsWidgetLowered(WID_QS_MOVE)) SetViewportStationRect(Station::Get(w->parent->window_number), true);
@@ -2485,10 +2486,10 @@ static void AddNearbyStation(TileIndex tile, TileArea *ctx)
 	/* This station is (likely) a waypoint */
 	if (!T::IsValidID(sid)) return;
 
-	BaseStation *st = BaseStation::Get(sid);
+	const BaseStation *st = BaseStation::Get(sid);
 	if (st->owner != _local_company || std::ranges::find(_stations_nearby_list, sid) != _stations_nearby_list.end()) return;
 
-	if (st->rect.BeforeAddRect(ctx->tile, ctx->w, ctx->h, StationRect::ADD_TEST).Succeeded()) {
+	if (CheckStationSpread(st->spread, *ctx).Succeeded()) {
 		_stations_nearby_list.push_back(sid);
 	}
 }

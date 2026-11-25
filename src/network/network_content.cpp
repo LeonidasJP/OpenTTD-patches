@@ -292,7 +292,7 @@ void ClientNetworkContentSocketHandler::RequestContentList(ContentVector *cv, bo
  * @param[out] bytes The number of bytes we are going to download.
  * @param fallback Whether to use the fallback or not.
  */
-void ClientNetworkContentSocketHandler::DownloadSelectedContent(uint &files, uint &bytes, bool fallback)
+void ClientNetworkContentSocketHandler::DownloadSelectedContent(uint &files, uint64_t &bytes, bool fallback)
 {
 	bytes = 0;
 
@@ -460,13 +460,22 @@ bool ClientNetworkContentSocketHandler::ReceiveServerContent(Packet &p)
 		this->cur_info->filesize = p.Recv_uint32();
 		this->cur_info->filename = p.Recv_string(NETWORK_CONTENT_FILENAME_LENGTH);
 
+		/* Check for the server sneaking in '..', '/' or '\'. */
+		if (this->cur_info->filename.find("..") != std::string::npos ||
+				this->cur_info->filename.find('/') != std::string::npos ||
+				this->cur_info->filename.find('\\') != std::string::npos) {
+			Debug(net, 1, "Invalid filename received [{}]", this->cur_info->filename);
+			this->CloseConnection();
+			return false;
+		}
+
 		if (!this->BeforeDownload()) {
 			this->CloseConnection();
 			return false;
 		}
 	} else {
 		/* We have a file opened, thus are downloading internal content */
-		ssize_t to_read = p.RemainingBytesToTransfer();
+		std::ptrdiff_t to_read = p.RemainingBytesToTransfer();
 		auto write_to_disk = [this](std::span<const uint8_t> buffer) {
 			return fwrite(buffer.data(), 1, buffer.size(), *this->cur_file);
 		};
@@ -482,7 +491,7 @@ bool ClientNetworkContentSocketHandler::ReceiveServerContent(Packet &p)
 			return false;
 		}
 
-		this->OnDownloadProgress(*this->cur_info, (int)to_read);
+		this->OnDownloadProgress(*this->cur_info, to_read);
 
 		if (to_read == 0) this->AfterDownload();
 	}
@@ -573,7 +582,8 @@ void ClientNetworkContentSocketHandler::OnFailure()
 
 	/* If we fail, download the rest via the 'old' system. */
 	if (!this->is_cancelled) {
-		uint files, bytes;
+		uint files;
+		uint64_t bytes;
 
 		this->DownloadSelectedContent(files, bytes, true);
 	}
@@ -609,7 +619,7 @@ void ClientNetworkContentSocketHandler::OnReceiveData(UniqueBuffer<char> data)
 			this->OnFailure();
 		} else {
 			/* Just received the data. */
-			this->OnDownloadProgress(*this->cur_info, (int)data.size());
+			this->OnDownloadProgress(*this->cur_info, static_cast<int64_t>(data.size()));
 		}
 
 		/* Nothing more to do now. */
@@ -678,6 +688,13 @@ void ClientNetworkContentSocketHandler::OnReceiveData(UniqueBuffer<char> data)
 				auto pos = filename.find_last_of('.');
 				if (pos == std::string::npos) throw std::exception{};
 				filename = filename.substr(0, pos);
+			}
+
+			/* Check for the server sneaking in '..' or '\'. '/' are already removed by the loop above. */
+			if (filename.find("..") != std::string::npos ||
+					filename.find('\\') != std::string::npos) {
+				Debug(net, 1, "Invalid filename received [{}]", filename);
+				throw std::exception{};
 			}
 
 			/* Copy the string, without extension, to the filename. */
@@ -1085,7 +1102,7 @@ void ClientNetworkContentSocketHandler::OnReceiveContentInfo(const ContentInfo &
 	}
 }
 
-void ClientNetworkContentSocketHandler::OnDownloadProgress(const ContentInfo &ci, int bytes)
+void ClientNetworkContentSocketHandler::OnDownloadProgress(const ContentInfo &ci, int64_t bytes)
 {
 	for (size_t i = 0; i < this->callbacks.size(); /* nothing */) {
 		ContentCallback *cb = this->callbacks[i];

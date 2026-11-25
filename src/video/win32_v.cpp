@@ -61,9 +61,6 @@ bool _window_maximize;
 static Dimension _bck_resolution;
 DWORD _imm_props;
 
-/** Local copy of the palette for use in the drawing thread. */
-static Palette _local_palette;
-
 void VideoDriver_Win32Base::ClaimMousePointer()
 {
 	MyShowCursor(false, true);
@@ -894,11 +891,19 @@ LRESULT CALLBACK WndProcGdi(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 					Dimension d = _bck_resolution; // Save current non-fullscreen window size as it will be overwritten by ShowWindow.
 					ShowWindow(hwnd, SW_RESTORE);
 					_bck_resolution = d;
-					video_driver->MakeWindow(true);
+					if (video_driver->MinimiseRestoreWithToggleFullscreen()) {
+						video_driver->ToggleFullscreen(true);
+					} else {
+						video_driver->MakeWindow(true);
+					}
 				} else if (!active && !minimized) {
 					/* Minimise the window and restore desktop */
+					if (video_driver->MinimiseRestoreWithToggleFullscreen()) {
+						video_driver->ToggleFullscreen(false);
+						video_driver->fullscreen = true;
+					}
 					ShowWindow(hwnd, SW_MINIMIZE);
-					ChangeDisplaySettings(nullptr, 0);
+					if (!video_driver->MinimiseRestoreWithToggleFullscreen()) ChangeDisplaySettings(nullptr, 0);
 				}
 			}
 			break;
@@ -923,7 +928,7 @@ static void RegisterWndClass()
 		hinst,
 		LoadIcon(hinst, MAKEINTRESOURCE(100)),
 		LoadCursor(nullptr, IDC_ARROW),
-		0,
+		static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)),
 		0,
 		L"OTTD"
 	};
@@ -965,7 +970,7 @@ static void FindResolutions(uint8_t bpp)
 	SortResolutions();
 }
 
-const char *VideoDriver_Win32Base::Initialize()
+std::optional<std::string_view> VideoDriver_Win32Base::Initialize()
 {
 	/* Initialize COM */
 	if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return "COM initialization failed";
@@ -980,14 +985,14 @@ const char *VideoDriver_Win32Base::Initialize()
 	this->height = this->height_org = _cur_resolution.height;
 
 	Debug(driver, 2, "Resolution for display: {}x{}", _cur_resolution.width, _cur_resolution.height);
-	return nullptr;
+	return std::nullopt;
 }
 
 void VideoDriver_Win32Base::Stop()
 {
 	DestroyWindow(this->main_wnd);
 
-	if (this->fullscreen) ChangeDisplaySettings(nullptr, 0);
+	if (this->fullscreen && MinimiseRestoreWithToggleFullscreen()) ChangeDisplaySettings(nullptr, 0);
 	MyShowCursor(true);
 }
 void VideoDriver_Win32Base::MakeDirty(int left, int top, int width, int height)
@@ -1000,7 +1005,7 @@ void VideoDriver_Win32Base::CheckPaletteAnim()
 {
 	if (_cur_palette.count_dirty == 0) return;
 
-	_local_palette = _cur_palette;
+	this->local_palette = _cur_palette;
 	_cur_palette.count_dirty = 0;
 	this->MakeDirty(0, 0, _screen.width, _screen.height);
 }
@@ -1071,7 +1076,7 @@ void VideoDriver_Win32Base::ClientSizeChanged(int w, int h, bool force)
 		/* Mark all palette colours dirty. */
 		_cur_palette.first_dirty = 0;
 		_cur_palette.count_dirty = 256;
-		_local_palette = _cur_palette;
+		this->local_palette = _cur_palette;
 		_cur_palette.count_dirty = 0;
 
 		BlitterFactory::GetCurrentBlitter()->PostResize();
@@ -1160,12 +1165,12 @@ void VideoDriver_Win32Base::UnlockVideoBuffer()
 
 static FVideoDriver_Win32GDI iFVideoDriver_Win32GDI;
 
-const char *VideoDriver_Win32GDI::Start(const StringList &param)
+std::optional<std::string_view> VideoDriver_Win32GDI::Start(const StringList &param)
 {
 	if (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 0) return "Only real blitters supported";
 
-	const char *err = this->Initialize();
-	if (err != nullptr) return err;
+	auto err = this->Initialize();
+	if (err) return err;
 
 	this->MakePalette();
 	this->AllocateBackingStore(_cur_resolution.width, _cur_resolution.height);
@@ -1175,7 +1180,7 @@ const char *VideoDriver_Win32GDI::Start(const StringList &param)
 
 	this->is_game_threaded = !GetDriverParamBool(param, "no_threads") && !GetDriverParamBool(param, "no_thread");
 
-	return nullptr;
+	return std::nullopt;
 }
 
 void VideoDriver_Win32GDI::Stop()
@@ -1237,7 +1242,7 @@ void VideoDriver_Win32GDI::MakePalette()
 {
 	_cur_palette.first_dirty = 0;
 	_cur_palette.count_dirty = 256;
-	_local_palette = _cur_palette;
+	this->local_palette = _cur_palette;
 
 	struct PaletteAllocation {
 		LOGPALETTE pal;
@@ -1251,9 +1256,9 @@ void VideoDriver_Win32GDI::MakePalette()
 	pal->palNumEntries = 256;
 
 	for (uint i = 0; i != 256; i++) {
-		pal->palPalEntry[i].peRed   = _local_palette.palette[i].r;
-		pal->palPalEntry[i].peGreen = _local_palette.palette[i].g;
-		pal->palPalEntry[i].peBlue  = _local_palette.palette[i].b;
+		pal->palPalEntry[i].peRed = this->local_palette.palette[i].r;
+		pal->palPalEntry[i].peGreen = this->local_palette.palette[i].g;
+		pal->palPalEntry[i].peBlue = this->local_palette.palette[i].b;
 		pal->palPalEntry[i].peFlags = 0;
 
 	}
@@ -1266,9 +1271,9 @@ void VideoDriver_Win32GDI::UpdatePalette(HDC dc, uint start, uint count)
 	RGBQUAD rgb[256];
 
 	for (uint i = 0; i != count; i++) {
-		rgb[i].rgbRed   = _local_palette.palette[start + i].r;
-		rgb[i].rgbGreen = _local_palette.palette[start + i].g;
-		rgb[i].rgbBlue  = _local_palette.palette[start + i].b;
+		rgb[i].rgbRed = this->local_palette.palette[start + i].r;
+		rgb[i].rgbGreen = this->local_palette.palette[start + i].g;
+		rgb[i].rgbBlue = this->local_palette.palette[start + i].b;
 		rgb[i].rgbReserved = 0;
 	}
 
@@ -1298,16 +1303,16 @@ void VideoDriver_Win32GDI::Paint()
 	HBITMAP old_bmp = (HBITMAP)SelectObject(dc2, this->dib_sect);
 	HPALETTE old_palette = SelectPalette(dc, this->gdi_palette, FALSE);
 
-	if (_local_palette.count_dirty != 0) {
+	if (this->local_palette.count_dirty != 0) {
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 
 		switch (blitter->UsePaletteAnimation()) {
 			case Blitter::PaletteAnimation::VideoBackend:
-				this->UpdatePalette(dc2, _local_palette.first_dirty, _local_palette.count_dirty);
+				this->UpdatePalette(dc2, this->local_palette.first_dirty, this->local_palette.count_dirty);
 				break;
 
 			case Blitter::PaletteAnimation::Blitter: {
-				blitter->PaletteAnimate(_local_palette);
+				blitter->PaletteAnimate(this->local_palette);
 				break;
 			}
 
@@ -1317,7 +1322,7 @@ void VideoDriver_Win32GDI::Paint()
 			default:
 				NOT_REACHED();
 		}
-		_local_palette.count_dirty = 0;
+		this->local_palette.count_dirty = 0;
 	}
 
 	BitBlt(dc, 0, 0, this->width, this->height, dc2, 0, 0, SRCCOPY);
@@ -1377,9 +1382,9 @@ static OGLProc GetOGLProcAddressCallback(const char *proc)
 /**
  * Set the pixel format of a window-
  * @param dc Device context to set the pixel format of.
- * @return nullptr on success, error message otherwise.
+ * @return std::nullopt on success, error message otherwise.
  */
-static const char *SelectPixelFormat(HDC dc)
+static std::optional<std::string_view> SelectPixelFormat(HDC dc)
 {
 	PIXELFORMATDESCRIPTOR pfd = {
 		sizeof(PIXELFORMATDESCRIPTOR), // Size of this struct.
@@ -1405,7 +1410,7 @@ static const char *SelectPixelFormat(HDC dc)
 	if (format == 0) return "No suitable pixel format found";
 	if (!SetPixelFormat(dc, format, &pfd)) return "Can't set pixel format";
 
-	return nullptr;
+	return std::nullopt;
 }
 
 /** Bind all WGL extension functions we need. */
@@ -1420,7 +1425,7 @@ static void LoadWGLExtensions()
 	HDC dc = GetDC(wnd);
 
 	/* Set pixel format of the window. */
-	if (SelectPixelFormat(dc) == nullptr) {
+	if (SelectPixelFormat(dc) == std::nullopt) {
 		/* Create rendering context. */
 		HGLRC rc = wglCreateContext(dc);
 		if (rc != nullptr) {
@@ -1460,7 +1465,7 @@ static void LoadWGLExtensions()
 
 static FVideoDriver_Win32OpenGL iFVideoDriver_Win32OpenGL;
 
-const char *VideoDriver_Win32OpenGL::Start(const StringList &param)
+std::optional<std::string_view> VideoDriver_Win32OpenGL::Start(const StringList &param)
 {
 	if (BlitterFactory::GetCurrentBlitter()->GetScreenDepth() == 0) return "Only real blitters supported";
 
@@ -1468,8 +1473,8 @@ const char *VideoDriver_Win32OpenGL::Start(const StringList &param)
 
 	LoadWGLExtensions();
 
-	const char *err = this->Initialize();
-	if (err != nullptr) {
+	auto err = this->Initialize();
+	if (err) {
 		this->Stop();
 		_cur_resolution = old_res;
 		return err;
@@ -1478,7 +1483,7 @@ const char *VideoDriver_Win32OpenGL::Start(const StringList &param)
 
 	/* Create and initialize OpenGL context. */
 	err = this->AllocateContext();
-	if (err != nullptr) {
+	if (err) {
 		this->Stop();
 		_cur_resolution = old_res;
 		return err;
@@ -1503,7 +1508,7 @@ const char *VideoDriver_Win32OpenGL::Start(const StringList &param)
 
 	this->is_game_threaded = !GetDriverParamBool(param, "no_threads") && !GetDriverParamBool(param, "no_thread");
 
-	return nullptr;
+	return std::nullopt;
 }
 
 void VideoDriver_Win32OpenGL::Stop()
@@ -1536,12 +1541,12 @@ void VideoDriver_Win32OpenGL::ToggleVsync(bool vsync)
 	}
 }
 
-const char *VideoDriver_Win32OpenGL::AllocateContext()
+std::optional<std::string_view> VideoDriver_Win32OpenGL::AllocateContext()
 {
 	this->dc = GetDC(this->main_wnd);
 
-	const char *err = SelectPixelFormat(this->dc);
-	if (err != nullptr) return err;
+	auto err = SelectPixelFormat(this->dc);
+	if (err) return err;
 
 	HGLRC rc = nullptr;
 
@@ -1583,7 +1588,7 @@ bool VideoDriver_Win32OpenGL::ToggleFullscreen(bool full_screen)
 	if (_screen.dst_ptr != nullptr) this->ReleaseVideoPointer();
 	this->DestroyContext();
 	bool res = this->VideoDriver_Win32Base::ToggleFullscreen(full_screen);
-	res &= this->AllocateContext() == nullptr;
+	res &= this->AllocateContext() == std::nullopt;
 	this->ClientSizeChanged(this->width, this->height, true);
 	return res;
 }
@@ -1628,6 +1633,7 @@ void *VideoDriver_Win32OpenGL::GetVideoPointer()
 {
 	if (BlitterFactory::GetCurrentBlitter()->NeedsAnimationBuffer()) {
 		this->anim_buffer = OpenGLBackend::Get()->GetAnimBuffer();
+		this->anim_pitch = _screen.pitch;
 	}
 	return OpenGLBackend::Get()->GetVideoBuffer();
 }
@@ -1639,22 +1645,23 @@ void VideoDriver_Win32OpenGL::ReleaseVideoPointer()
 	this->dirty_rect = {};
 	_screen.dst_ptr = nullptr;
 	this->anim_buffer = nullptr;
+	this->anim_pitch = 0;
 }
 
 void VideoDriver_Win32OpenGL::Paint()
 {
 	PerformanceMeasurer framerate(PerformanceElement::Video);
 
-	if (_local_palette.count_dirty != 0) {
+	if (this->local_palette.count_dirty != 0) {
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 
 		/* Always push a changed palette to OpenGL. */
-		OpenGLBackend::Get()->UpdatePalette(_local_palette.palette, _local_palette.first_dirty, _local_palette.count_dirty);
+		OpenGLBackend::Get()->UpdatePalette(this->local_palette.palette, this->local_palette.first_dirty, this->local_palette.count_dirty);
 		if (blitter->UsePaletteAnimation() == Blitter::PaletteAnimation::Blitter) {
-			blitter->PaletteAnimate(_local_palette);
+			blitter->PaletteAnimate(this->local_palette);
 		}
 
-		_local_palette.count_dirty = 0;
+		this->local_palette.count_dirty = 0;
 	}
 
 	OpenGLBackend::Get()->Paint();

@@ -45,6 +45,17 @@ struct OrthogonalTileArea {
 	void Add(TileIndex to_add);
 
 	/**
+	 * Add another tile area to this tile area.
+	 * @param area The tile area to add.
+	 */
+	inline void Add(const OrthogonalTileArea &area)
+	{
+		/* Only the top and bottom corners need to be added. */
+		this->Add(area.tile);
+		this->Add(TileAddXY(area.tile, area.w - 1, area.h - 1));
+	}
+
+	/**
 	 * Clears the 'tile area', i.e. make the tile invalid.
 	 */
 	void Clear()
@@ -66,7 +77,7 @@ struct OrthogonalTileArea {
 	 * Get the center tile.
 	 * @return The tile at the center, or just north of it.
 	 */
-	TileIndex GetCenterTile() const
+	TileIndex GetCentreTile() const
 	{
 		return TileAddXY(this->tile, this->w / 2, this->h / 2);
 	}
@@ -130,8 +141,6 @@ protected:
 	}
 
 public:
-	virtual ~TileIterator() = default;
-
 	/**
 	 * Get the tile we are currently at.
 	 * @return The tile we are at, or INVALID_TILE when we're done.
@@ -150,22 +159,57 @@ public:
 		return this->tile;
 	}
 
-	/**
-	 * Move ourselves to the next tile in the rectangle on the map.
-	 * @return Reference to this iterator.
-	 */
-	virtual TileIterator& operator ++() = 0;
+	inline TileIterator& operator ++() = delete;
 
 	bool operator==(const TileIterator&) const = default;
 	bool operator==(const TileIndex &other) const { return this->tile == other; }
+};
+
+class GenericTileIteratorRef {
+	using Incrementer = void(TileIterator &);
+
+	TileIterator &iter;
+	Incrementer *incrementer;
+
+public:
+	template <typename T>
+	GenericTileIteratorRef(T &&iter) : iter(iter)
+	{
+		this->incrementer = [](TileIterator &iter) {
+			++static_cast<T &>(iter);
+		};
+	}
 
 	/**
-	 * Allocate a new iterator that is a copy of this one.
-	 * @return A clone of this iterator.
+	 * Get the tile we are currently at.
+	 * @return The tile we are at, or INVALID_TILE when we're done.
 	 */
-	virtual std::unique_ptr<TileIterator> Clone() const = 0;
+	inline operator TileIndex () const
+	{
+		return *this->iter;
+	}
 
-	static std::unique_ptr<TileIterator> Create(TileIndex corner1, TileIndex corner2, bool diagonal);
+	/**
+	 * Get the tile we are currently at.
+	 * @return The tile we are at, or INVALID_TILE when we're done.
+	 */
+	inline TileIndex operator *() const
+	{
+		return *this->iter;
+	}
+
+	/**
+	 * Move ourselves to the next tile.
+	 * @return Reference to this iterator.
+	 */
+	inline GenericTileIteratorRef& operator ++()
+	{
+		this->incrementer(this->iter);
+		return *this;
+	}
+
+	bool operator==(const GenericTileIteratorRef &other) const { return *(this->iter) == *(other.iter); }
+	bool operator==(const TileIndex &other) const { return *(this->iter) == other; }
 };
 
 /** Iterator to iterate over a tile area (rectangle) of the map. */
@@ -198,7 +242,7 @@ public:
 	 * Move ourselves to the next tile in the rectangle on the map.
 	 * @return Reference to this iterator.
 	 */
-	inline TileIterator& operator ++() override
+	inline OrthogonalTileIterator& operator ++()
 	{
 		assert(this->tile != INVALID_TILE);
 
@@ -211,11 +255,6 @@ public:
 			this->tile = INVALID_TILE;
 		}
 		return *this;
-	}
-
-	std::unique_ptr<TileIterator> Clone() const override
-	{
-		return std::make_unique<OrthogonalTileIterator>(*this);
 	}
 };
 
@@ -299,12 +338,7 @@ public:
 		*this = DiagonalTileIterator(DiagonalTileArea(corner1, corner2));
 	}
 
-	TileIterator& operator ++() override;
-
-	std::unique_ptr<TileIterator> Clone() const override
-	{
-		return std::make_unique<DiagonalTileIterator>(*this);
-	}
+	DiagonalTileIterator& operator ++();
 };
 
 class OrthogonalOrDiagonalTileIterator {

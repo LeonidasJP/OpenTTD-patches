@@ -71,18 +71,6 @@ public:
 		this->data.clear();
 	}
 
-	/**
-	 * Initialize the BitmapTileArea with the specified Rect.
-	 * @param r Rect to use.
-	 */
-	void Initialize(const Rect &r)
-	{
-		this->tile = TileXY(r.left, r.top);
-		this->w = r.Width();
-		this->h = r.Height();
-		this->ResetData();
-	}
-
 	void Initialize(const TileArea &ta)
 	{
 		this->tile = ta.tile;
@@ -186,16 +174,11 @@ public:
 		}
 	}
 
-	inline TileIterator& operator ++() override
+	inline BitmapTileIterator& operator ++()
 	{
 		assert(this->tile != INVALID_TILE);
 		this->advance();
 		return *this;
-	}
-
-	std::unique_ptr<TileIterator> Clone() const override
-	{
-		return std::make_unique<BitmapTileIterator>(*this);
 	}
 };
 

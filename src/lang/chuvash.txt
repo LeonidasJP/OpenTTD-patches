@@ -680,6 +680,7 @@ STR_CONFIG_SETTING_LAND_GENERATOR_TERRA_GENESIS                 :TerraGenesis
 
 
 
+
 ###length 4
 
 ###length 4
@@ -1521,7 +1522,6 @@ STR_VEHICLE_VIEW_CAPTION                                        :{WHITE}{VEHICLE
 
 
 
-STR_VEHICLE_INFO_NO_CAPACITY                                    :{BLACK}Савӑт: {LTBLUE}Ҫук пул{STRING}
 
 
 
@@ -1529,6 +1529,8 @@ STR_VEHICLE_INFO_NO_CAPACITY                                    :{BLACK}Савӑ
 ###length VEHICLE_TYPES
 
 # Extra buttons for train details windows
+
+
 
 
 

@@ -74,7 +74,7 @@ static ChangeInfoResult AirportChangeInfo(uint first, uint last, int prop, const
 				if (subs_id == 0xFF) {
 					/* Instead of defining a new airport, an airport id
 					 * of 0xFF disables the old airport with the current id. */
-					AirportSpec::GetWithoutOverride(id)->enabled = false;
+					if (id < NEW_AIRPORT_OFFSET) AirportSpec::GetWithoutOverride(id)->enabled = false;
 					continue;
 				} else if (subs_id >= NEW_AIRPORT_OFFSET) {
 					/* The substitute id must be one of the original airports. */
@@ -149,20 +149,32 @@ static ChangeInfoResult AirportChangeInfo(uint first, uint last, int prop, const
 								tile.gfx = tempid;
 							}
 						} else if (tile.gfx == 0xFF) {
+							tile.gfx = AIRPORTGFX_CLEARTILE_SPECIALCHECK;
 							tile.ti.x = static_cast<int8_t>(GB(tile.ti.x, 0, 8));
 							tile.ti.y = static_cast<int8_t>(GB(tile.ti.y, 0, 8));
+
+							/* When there were only 256x256 maps, TileIndex was a uint16_t and
+							 * it.ti was just a TileIndexDiff that was added to it.
+							 * As such negative "x" values were shifted into the "y" position.
+							 *   x = -1, y = 1 -> x = 255, y = 0
+							 * Since GRF version 8 the position is interpreted as pair of independent int8.
+							 * For GRF version < 8 we need to emulate the old shifting behaviour.
+							 */
+							if (_cur_gps.grffile->grf_version < 8 && tile.ti.x < 0) tile.ti.y += 1;
 						} else if (tile.gfx >= NEW_AIRPORTTILE_OFFSET) {
 							GrfMsg(2, "AirportChangeInfo: Attempt to use invalid airport tile {} with airport id {}. Ignoring.", tile.gfx, id);
 							invalid_layout = true;
 						}
 
-						/* Determine largest size. */
-						if (layout.rotation == Direction::E || layout.rotation == Direction::W) {
-							size_x = std::max<uint8_t>(size_x, tile.ti.y + 1);
-							size_y = std::max<uint8_t>(size_y, tile.ti.x + 1);
-						} else {
-							size_x = std::max<uint8_t>(size_x, tile.ti.x + 1);
-							size_y = std::max<uint8_t>(size_y, tile.ti.y + 1);
+						if (tile.gfx != AIRPORTGFX_CLEARTILE_SPECIALCHECK) {
+							/* Determine largest size. */
+							if (layout.rotation == Direction::E || layout.rotation == Direction::W) {
+								size_x = std::max<uint8_t>(size_x, tile.ti.y + 1);
+								size_y = std::max<uint8_t>(size_y, tile.ti.x + 1);
+							} else {
+								size_x = std::max<uint8_t>(size_x, tile.ti.x + 1);
+								size_y = std::max<uint8_t>(size_y, tile.ti.y + 1);
+							}
 						}
 					}
 
@@ -188,7 +200,7 @@ static ChangeInfoResult AirportChangeInfo(uint first, uint last, int prop, const
 				break;
 
 			case 0x0D:
-				as->ttd_airport_type = (TTDPAirportType)buf.ReadByte();
+				as->ttd_airport_type = TTDPAirportType{buf.ReadByte()};
 				break;
 
 			case 0x0E:
@@ -280,12 +292,12 @@ static ChangeInfoResult AirportTilesChangeInfo(uint first, uint last, int prop, 
 			}
 
 			case 0x0E: // Callback mask
-				tsp->callback_mask = static_cast<AirportTileCallbackMasks>(buf.ReadByte());
+				tsp->callback_mask = AirportTileCallbackMasks{buf.ReadByte()};
 				break;
 
 			case 0x0F: // Animation information
 				tsp->animation.frames = buf.ReadByte();
-				tsp->animation.status = static_cast<AnimationStatus>(buf.ReadByte());
+				tsp->animation.status = AnimationStatus{buf.ReadByte()};
 				break;
 
 			case 0x10: // Animation speed
@@ -293,7 +305,7 @@ static ChangeInfoResult AirportTilesChangeInfo(uint first, uint last, int prop, 
 				break;
 
 			case 0x11: // Animation triggers
-				tsp->animation.triggers = static_cast<AirportAnimationTriggers>(buf.ReadByte());
+				tsp->animation.triggers = AirportAnimationTriggers{buf.ReadByte()};
 				break;
 
 			case 0x12: // Badge list
